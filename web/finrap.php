@@ -698,32 +698,224 @@ $termijnLines = is_array($modal['termijn_lines'] ?? null) ? $modal['termijn_line
         }
 
         @media print {
+            html,
             body {
                 background: #ffffff;
+                width: 100%;
+                height: auto;
+                overflow: visible;
+                margin: 0;
+                padding: 0;
+                color: #000;
             }
 
             .project-overlay {
                 position: static;
                 inset: auto;
-                padding: 0;
+                padding: 0 !important;
                 background: transparent;
                 display: block;
+                width: 100%;
+                height: auto;
             }
 
+            .project-modal-head,
             .project-modal-head-actions {
                 display: none !important;
             }
 
             .project-modal {
-                border: 0;
+                border: none;
                 box-shadow: none;
                 border-radius: 0;
                 width: 100%;
-                height: auto;
+                height: auto !important;
+                max-width: 100%;
+                max-height: none !important;
+                display: block !important;
+                flex: none !important;
+                overflow: visible !important;
+                background: #fff !important;
             }
 
             .project-modal-body {
-                overflow: visible;
+                overflow: visible !important;
+                height: auto !important;
+                flex: none !important;
+                display: block !important;
+                background: #fff !important;
+            }
+
+            /* Keep header and info panels in their grid layout */
+            .project-modal-header-panel {
+                display: grid !important;
+                grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+                gap: 18px 36px !important;
+                padding: 20px !important;
+                background: linear-gradient(135deg, #0066cc 0%, #0052a3 100%) !important;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+                color: #ffffff !important;
+                width: 100% !important;
+                height: auto !important;
+                page-break-inside: avoid;
+                margin: 0 0 10px 0 !important;
+            }
+
+            .project-modal-info-panel {
+                display: grid !important;
+                grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+                gap: 18px 36px !important;
+                padding: 24px 20px 28px !important;
+                background: #ffffff !important;
+                width: 100% !important;
+                height: auto !important;
+                page-break-inside: avoid;
+                margin: 0 0 10px 0 !important;
+            }
+
+            .project-modal-column {
+                display: flex !important;
+                flex-direction: column !important;
+                gap: 8px !important;
+            }
+
+            .project-field {
+                display: grid !important;
+                grid-template-columns: 160px minmax(0, 1fr) !important;
+                gap: 10px !important;
+                align-items: start !important;
+            }
+
+            .project-field-label {
+                font-weight: 700;
+                letter-spacing: 0.01em;
+                color: inherit !important;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+            }
+
+            .project-modal-header-panel .project-field-label,
+            .project-modal-header-panel .project-field-value {
+                color: #ffffff !important;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+            }
+
+            .project-modal-info-panel .project-field-label {
+                color: var(--kvt-perkins-blue) !important;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+            }
+
+            .project-field-value {
+                word-break: break-word;
+                color: inherit !important;
+            }
+
+            /* Sections */
+            .project-modal-summary-section,
+            .project-modal-cost-groups-section {
+                display: block !important;
+                width: 100% !important;
+                height: auto !important;
+                padding: 0 20px 20px !important;
+                background: #ffffff !important;
+                margin: 0 !important;
+                page-break-inside: avoid;
+            }
+
+            .analytics-blocks-section {
+                display: grid !important;
+                grid-template-columns: 1fr 1fr 1fr !important;
+                gap: 12px !important;
+                padding: 0 20px 20px !important;
+                background: #ffffff !important;
+                margin: 0 !important;
+                page-break-inside: avoid;
+            }
+
+            .analytics-block {
+                break-inside: avoid;
+                page-break-inside: avoid;
+                background: #ffffff !important;
+            }
+
+            .analytics-block-header {
+                background: var(--kvt-perkins-blue) !important;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+            }
+
+            .analytics-block-body {
+                display: block !important;
+                background: #ffffff !important;
+            }
+
+            .analytics-row {
+                display: flex !important;
+            }
+
+            /* Tables */
+            .project-metric-table,
+            .project-cost-group-table {
+                width: 100% !important;
+                display: table !important;
+                overflow: visible !important;
+                white-space: normal !important;
+                border-collapse: collapse;
+                margin-bottom: 12px;
+                page-break-inside: avoid;
+                background: #ffffff !important;
+            }
+
+            .project-metric-table thead,
+            .project-cost-group-table thead {
+                display: table-header-group;
+                background: var(--kvt-perkins-blue) !important;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+            }
+
+            .project-metric-table tbody,
+            .project-cost-group-table tbody {
+                display: table-row-group;
+                background: #ffffff !important;
+            }
+
+            .project-metric-table tr,
+            .project-cost-group-table tr {
+                display: table-row;
+                page-break-inside: avoid;
+                background: #ffffff !important;
+            }
+
+            .project-metric-table th,
+            .project-cost-group-table th {
+                display: table-cell;
+                padding: 8px 10px !important;
+                background: var(--kvt-perkins-blue) !important;
+                color: #ffffff !important;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+            }
+
+            .project-metric-table td,
+            .project-cost-group-table td {
+                display: table-cell;
+                padding: 8px 10px !important;
+                background: #ffffff !important;
+                color: #000 !important;
+            }
+
+            /* Termijn list */
+            .termijn-list {
+                display: block !important;
+            }
+
+            .termijn-item {
+                display: grid !important;
+                page-break-inside: avoid;
             }
         }
         .analytics-blocks-section {
