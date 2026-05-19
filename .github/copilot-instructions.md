@@ -1,8 +1,8 @@
-# Copilot-instructies voor Daedalus
+# Copilot-instructies voor FinRap
 
 ## Scope en architectuur
-- Deze applicatie draait volledig vanuit de map `/web/` en wordt gepubliceerd onder `https://sleutels.kvt.nl/daedalus`.
-- Houd links daarom relatief (`index.php`, `odata.php?...`) of vanaf `/daedalus/...` als absolute paden nodig zijn.
+- Deze applicatie draait volledig vanuit de map `/web/` en wordt gepubliceerd onder `https://sleutels.kvt.nl/finrap`.
+- Houd links daarom relatief (`index.php`, `odata.php?...`) of vanaf `/finrap/...` als absolute paden nodig zijn.
 - De app is mobile-first. Nieuwe UI-wijzigingen moeten eerst op telefoonscherm goed leesbaar zijn.
 
 ## Niet wijzigen

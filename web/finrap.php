@@ -15,7 +15,17 @@ require_once __DIR__ . '/finrap_data.php';
  */
 function finrap_format_currency(float $value): string
 {
-    return 'EUR ' . number_format($value, 2, ',', '.');
+    return '€ ' . number_format($value, 2, ',', '.');
+}
+
+function finrap_currency_sign_class(float $value): string
+{
+    $epsilon = 0.000001;
+    if (abs($value) < $epsilon) {
+        return 'is-zero';
+    }
+
+    return $value > 0 ? 'is-positive' : 'is-negative';
 }
 
 function finrap_month_label(string $yearMonth): string
@@ -76,6 +86,114 @@ function finrap_format_report_datetime(string $rawDateTime): string
     $monthLabel = $months[$monthNumber] ?? $monthNumber;
 
     return $dt->format('j') . ' ' . $monthLabel . ' ' . $dt->format('Y, H:i');
+}
+
+function finrap_cost_group_columns(): array
+{
+    return [
+        ['key' => 'Cost_Group_Code', 'label' => 'Cost group code', 'is_right' => false],
+        ['key' => 'Cost_Group_Description', 'label' => 'Cost Group Description', 'is_right' => false],
+        ['key' => 'Budget_Cost', 'label' => 'Budget Cost', 'is_right' => true],
+        ['key' => 'EAC', 'label' => 'EAC', 'is_right' => true],
+        ['key' => 'Booked_Cost', 'label' => 'Booked Cost', 'is_right' => true],
+        ['key' => 'Entered_Obligations', 'label' => 'Entered Obligations', 'is_right' => true],
+        ['key' => 'Variance_Budget_EAC', 'label' => 'Variance Budget - EAC', 'is_right' => true],
+    ];
+}
+
+function finrap_is_all_zero_totals_row(array $row): bool
+{
+    $budget = finance_to_float($row['Budget_Cost'] ?? 0.0);
+    $eac = finance_to_float($row['EAC'] ?? 0.0);
+    $booked = finance_to_float($row['Booked_Cost'] ?? 0.0);
+    $obligations = finance_to_float($row['Entered_Obligations'] ?? 0.0);
+    $variance = finance_to_float($row['Variance_Budget_EAC'] ?? 0.0);
+
+    $epsilon = 0.000001;
+    return abs($budget) < $epsilon
+        && abs($eac) < $epsilon
+        && abs($booked) < $epsilon
+        && abs($obligations) < $epsilon
+        && abs($variance) < $epsilon;
+}
+
+function finrap_render_cost_group_table(array $taskRows, bool $totalsOnly = false, bool $hideAllZeroTotals = false): void
+{
+    $columns = finrap_cost_group_columns();
+
+    echo '<table class="project-cost-group-table">';
+    echo '<thead><tr>';
+    foreach ($columns as $column) {
+        $thClass = (bool) ($column['is_right'] ?? false) ? ' class="is-right"' : '';
+        echo '<th' . $thClass . '>' . htmlspecialchars((string) ($column['label'] ?? '')) . '</th>';
+    }
+    echo '</tr></thead>';
+    echo '<tbody>';
+
+    foreach ($taskRows as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+
+        $isTotalRow = (bool) ($row['Is_Total_Row'] ?? false);
+        if ($totalsOnly && !$isTotalRow) {
+            continue;
+        }
+        if ($totalsOnly && $hideAllZeroTotals && finrap_is_all_zero_totals_row($row)) {
+            continue;
+        }
+
+        $taskCode = (string) ($row['Cost_Group_Code'] ?? '');
+        $descriptionValue = (string) ($row['Cost_Group_Description'] ?? '');
+        if (preg_match('/^\d{3}-000-000$/', $taskCode) === 1 && $isTotalRow) {
+            $descriptionValue = (string) ($row['Cost_Group_Description'] ?? '');
+        } elseif (preg_match('/^\d{3}-\d{3}-000$/', $taskCode) === 1 && $isTotalRow) {
+            $descriptionValue = "\u{00A0}\u{00A0}" . $descriptionValue;
+        } elseif (preg_match('/^\d{3}-\d{3}-\d{3}$/', $taskCode) === 1 && !$isTotalRow) {
+            $descriptionValue = "\u{00A0}\u{00A0}\u{00A0}\u{00A0}" . $descriptionValue;
+        }
+
+        $rowClass = '';
+        if ($isTotalRow) {
+            $rowClass = 'is-total-row';
+            if (preg_match('/^\d{3}-000-000$/', $taskCode) === 1) {
+                $rowClass .= ' is-major-total-row';
+            } elseif (preg_match('/^\d{3}-\d{3}-000$/', $taskCode) === 1) {
+                $rowClass .= ' is-minor-total-row';
+            }
+        }
+
+        echo '<tr' . ($rowClass !== '' ? ' class="' . htmlspecialchars($rowClass) . '"' : '') . '>';
+        foreach ($columns as $column) {
+            $columnKey = (string) ($column['key'] ?? '');
+            $isRight = (bool) ($column['is_right'] ?? false);
+
+            if ($columnKey === 'Cost_Group_Code') {
+                $cellClass = $isRight ? ' class="is-right"' : '';
+                echo '<td' . $cellClass . '>' . htmlspecialchars($taskCode) . '</td>';
+                continue;
+            }
+
+            if ($columnKey === 'Cost_Group_Description') {
+                echo '<td class="is-description">' . htmlspecialchars($descriptionValue) . '</td>';
+                continue;
+            }
+
+            $value = finance_to_float($row[$columnKey] ?? 0.0);
+            if ($columnKey === 'Variance_Budget_EAC') {
+                $cellClass = 'is-right ' . finrap_currency_sign_class($value);
+                echo '<td class="' . htmlspecialchars($cellClass) . '">' . htmlspecialchars(finrap_format_currency($value)) . '</td>';
+                continue;
+            }
+
+            $cellClass = trim('is-right ' . finrap_currency_sign_class($value));
+            echo '<td class="' . htmlspecialchars($cellClass) . '">' . htmlspecialchars(finrap_format_currency($value)) . '</td>';
+        }
+        echo '</tr>';
+    }
+
+    echo '</tbody>';
+    echo '</table>';
 }
 
 /**
@@ -404,13 +522,21 @@ $installmentsReceived = (float) ($modal['installments_received'] ?? 0.0);
             background: #eff6ff;
         }
 
-        .is-positive {
-            color: #0f7a34;
+        .project-metric-table tbody td.is-positive,
+        .project-cost-group-table tbody td.is-positive {
+            color: #0a4e22;
             font-weight: 700;
         }
 
-        .is-negative {
-            color: #c62828;
+        .project-metric-table tbody td.is-negative,
+        .project-cost-group-table tbody td.is-negative {
+            color: #661515;
+            font-weight: 700;
+        }
+
+        .project-metric-table tbody td.is-zero,
+        .project-cost-group-table tbody td.is-zero {
+            color: #64748b;
             font-weight: 700;
         }
 
@@ -546,7 +672,9 @@ $installmentsReceived = (float) ($modal['installments_received'] ?? 0.0);
                             </div>
                             <div class="project-field">
                                 <div class="project-field-label">Project manager</div>
-                                <div class="project-field-value"><?= htmlspecialchars($projectManager) ?></div>
+                                <div class="project-field-value">
+                                    <?= str_replace("KVT\\", "", htmlspecialchars($projectManager)) ?>
+                                </div>
                             </div>
                             <div class="project-field">
                                 <div class="project-field-label">Order type</div>
@@ -590,23 +718,25 @@ $installmentsReceived = (float) ($modal['installments_received'] ?? 0.0);
                             </thead>
                             <tbody>
                                 <tr>
-                                    <td class="is-right"><?= htmlspecialchars(finrap_format_currency($contractValue)) ?>
+                                    <td class="is-right <?= finrap_currency_sign_class($contractValue) ?>">
+                                        <?= htmlspecialchars(finrap_format_currency($contractValue)) ?>
                                     </td>
-                                    <td class="is-right"><?= htmlspecialchars(finrap_format_currency($totalDirectCost)) ?>
+                                    <td class="is-right <?= finrap_currency_sign_class($totalDirectCost) ?>">
+                                        <?= htmlspecialchars(finrap_format_currency($totalDirectCost)) ?>
                                     </td>
-                                    <td class="is-right <?= $grossProfit >= 0 ? 'is-positive' : 'is-negative' ?>">
+                                    <td class="is-right <?= finrap_currency_sign_class($grossProfit) ?>">
                                         <?= htmlspecialchars(finrap_format_currency($grossProfit)) ?>
                                     </td>
-                                    <td class="is-right <?= $variance >= 0 ? 'is-positive' : 'is-negative' ?>">
+                                    <td class="is-right <?= finrap_currency_sign_class($variance) ?>">
                                         <?= htmlspecialchars(finrap_format_currency($variance)) ?>
                                     </td>
-                                    <td class="is-right <?= $orderResult >= 0 ? 'is-positive' : 'is-negative' ?>">
+                                    <td class="is-right <?= finrap_currency_sign_class($orderResult) ?>">
                                         <?= htmlspecialchars(finrap_format_currency($orderResult)) ?>
                                     </td>
-                                    <td class="is-right">
+                                    <td class="is-right <?= finrap_currency_sign_class($installmentsInvoiced) ?>">
                                         <?= htmlspecialchars(finrap_format_currency($installmentsInvoiced)) ?>
                                     </td>
-                                    <td class="is-right">
+                                    <td class="is-right <?= finrap_currency_sign_class($installmentsReceived) ?>">
                                         <?= htmlspecialchars(finrap_format_currency($installmentsReceived)) ?>
                                     </td>
                                 </tr>
@@ -615,64 +745,11 @@ $installmentsReceived = (float) ($modal['installments_received'] ?? 0.0);
                     </section>
 
                     <section class="project-modal-cost-groups-section">
-                        <table class="project-cost-group-table">
-                            <thead>
-                                <tr>
-                                    <th>Cost group code</th>
-                                    <th>Cost Group Description</th>
-                                    <th class="is-right">Budget Cost</th>
-                                    <th class="is-right">EAC</th>
-                                    <th class="is-right">Booked Cost</th>
-                                    <th class="is-right">Entered Obligations</th>
-                                    <th class="is-right">Variance Budget - EAC</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php foreach ($taskRows as $row): ?>
-                                    <?php
-                                    $isTotalRow = (bool) ($row['Is_Total_Row'] ?? false);
-                                    $taskCode = (string) ($row['Cost_Group_Code'] ?? '');
-                                    $descriptionValue = (string) ($row['Cost_Group_Description'] ?? '');
-                                    if (preg_match('/^\d{3}-000-000$/', $taskCode) === 1 && $isTotalRow) {
-                                        $descriptionValue = (string) ($row['Cost_Group_Description'] ?? '');
-                                    } elseif (preg_match('/^\d{3}-\d{3}-000$/', $taskCode) === 1 && $isTotalRow) {
-                                        $descriptionValue = "\u{00A0}\u{00A0}" . $descriptionValue;
-                                    } elseif (preg_match('/^\d{3}-\d{3}-\d{3}$/', $taskCode) === 1 && !$isTotalRow) {
-                                        $descriptionValue = "\u{00A0}\u{00A0}\u{00A0}\u{00A0}" . $descriptionValue;
-                                    }
-                                    $varianceBudget = (float) ($row['Variance_Budget_EAC'] ?? 0.0);
-                                    $rowClass = '';
-                                    if ($isTotalRow) {
-                                        $rowClass = 'is-total-row';
-                                        if (preg_match('/^\d{3}-000-000$/', $taskCode) === 1) {
-                                            $rowClass .= ' is-major-total-row';
-                                        } elseif (preg_match('/^\d{3}-\d{3}-000$/', $taskCode) === 1) {
-                                            $rowClass .= ' is-minor-total-row';
-                                        }
-                                    }
-                                    ?>
-                                    <tr class="<?= $rowClass ?>">
-                                        <td><?= htmlspecialchars($taskCode) ?></td>
-                                        <td class="is-description"><?= htmlspecialchars($descriptionValue) ?></td>
-                                        <td class="is-right">
-                                            <?= htmlspecialchars(finrap_format_currency((float) ($row['Budget_Cost'] ?? 0.0))) ?>
-                                        </td>
-                                        <td class="is-right">
-                                            <?= htmlspecialchars(finrap_format_currency((float) ($row['EAC'] ?? 0.0))) ?>
-                                        </td>
-                                        <td class="is-right">
-                                            <?= htmlspecialchars(finrap_format_currency((float) ($row['Booked_Cost'] ?? 0.0))) ?>
-                                        </td>
-                                        <td class="is-right">
-                                            <?= htmlspecialchars(finrap_format_currency((float) ($row['Entered_Obligations'] ?? 0.0))) ?>
-                                        </td>
-                                        <td class="is-right <?= $varianceBudget >= 0 ? 'is-positive' : 'is-negative' ?>">
-                                            <?= htmlspecialchars(finrap_format_currency($varianceBudget)) ?>
-                                        </td>
-                                    </tr>
-                                <?php endforeach; ?>
-                            </tbody>
-                        </table>
+                        <?php finrap_render_cost_group_table($taskRows, true, true); ?>
+                    </section>
+
+                    <section class="project-modal-cost-groups-section">
+                        <?php finrap_render_cost_group_table($taskRows, false, false); ?>
                     </section>
                 <?php endif; ?>
 
