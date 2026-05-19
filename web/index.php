@@ -46,18 +46,18 @@ function index_discover_companies(): array
 function index_month_label(string $yearMonth): string
 {
 	static $months = [
-		'01' => 'Januari',
-		'02' => 'Februari',
-		'03' => 'Maart',
-		'04' => 'April',
-		'05' => 'Mei',
-		'06' => 'Juni',
-		'07' => 'Juli',
-		'08' => 'Augustus',
-		'09' => 'September',
-		'10' => 'Oktober',
-		'11' => 'November',
-		'12' => 'December',
+	'01' => 'Januari',
+	'02' => 'Februari',
+	'03' => 'Maart',
+	'04' => 'April',
+	'05' => 'Mei',
+	'06' => 'Juni',
+	'07' => 'Juli',
+	'08' => 'Augustus',
+	'09' => 'September',
+	'10' => 'Oktober',
+	'11' => 'November',
+	'12' => 'December',
 	];
 
 	[$year, $month] = explode('-', $yearMonth);
@@ -264,7 +264,7 @@ if (($_GET['action'] ?? '') === 'find_project') {
 			'ok' => true,
 			'project' => $project,
 			'project_no' => $resolvedProjectNo,
-			'cached_months' => finrap_list_cached_months($company, $resolvedProjectNo),
+			'reports' => finrap_list_report_snapshots($company, $resolvedProjectNo),
 			'recent_projects' => $recentProjectsPayload,
 		]);
 	} catch (Throwable $error) {
@@ -272,7 +272,7 @@ if (($_GET['action'] ?? '') === 'find_project') {
 	}
 }
 
-if (($_GET['action'] ?? '') === 'list_cached_months') {
+if (($_GET['action'] ?? '') === 'list_reports') {
 	$company = trim((string) ($_POST['company'] ?? ''));
 	$projectNo = trim((string) ($_POST['project_no'] ?? ''));
 	if ($company === '' || !in_array($company, $companies, true) || $projectNo === '') {
@@ -281,14 +281,13 @@ if (($_GET['action'] ?? '') === 'list_cached_months') {
 
 	index_json_response([
 		'ok' => true,
-		'cached_months' => finrap_list_cached_months($company, $projectNo),
+		'reports' => finrap_list_report_snapshots($company, $projectNo),
 	]);
 }
 
-if (($_GET['action'] ?? '') === 'generate_month') {
+if (($_GET['action'] ?? '') === 'generate_report') {
 	$company = trim((string) ($_POST['company'] ?? ''));
 	$projectNo = trim((string) ($_POST['project_no'] ?? ''));
-	$yearMonth = trim((string) ($_POST['year_month'] ?? ''));
 
 	if ($company === '' || !in_array($company, $companies, true)) {
 		index_json_response(['ok' => false, 'error' => 'Kies een geldig bedrijf.'], 400);
@@ -296,27 +295,46 @@ if (($_GET['action'] ?? '') === 'generate_month') {
 	if ($projectNo === '') {
 		index_json_response(['ok' => false, 'error' => 'Projectnummer ontbreekt.'], 400);
 	}
-	if (!preg_match('/^\d{4}-\d{2}$/', $yearMonth)) {
-		index_json_response(['ok' => false, 'error' => 'Kies een geldige maand.'], 400);
-	}
 
 	try {
+		$yearMonth = gmdate('Y-m');
 		$report = finrap_generate_month_for_project($company, $projectNo, $yearMonth);
-		$saveOk = finrap_save($company, $projectNo, $yearMonth, $report);
-		if (!$saveOk) {
-			index_json_response(['ok' => false, 'error' => 'Opslaan van de maandcache is mislukt.'], 500);
+		$resolvedProjectNo = (string) ($report['project_no'] ?? $projectNo);
+		$reportId = finrap_save_report_snapshot($company, $resolvedProjectNo, $report);
+		if (!is_string($reportId) || $reportId === '') {
+			index_json_response(['ok' => false, 'error' => 'Opslaan van het rapport is mislukt.'], 500);
 		}
 
 		index_json_response([
 			'ok' => true,
-			'project_no' => (string) ($report['project_no'] ?? $projectNo),
-			'year_month' => $yearMonth,
-			'cached_months' => finrap_list_cached_months($company, (string) ($report['project_no'] ?? $projectNo)),
-			'report_url' => 'finrap.php?company=' . rawurlencode($company) . '&project_no=' . rawurlencode((string) ($report['project_no'] ?? $projectNo)) . '&year_month=' . rawurlencode($yearMonth),
+			'project_no' => $resolvedProjectNo,
+			'report_id' => $reportId,
+			'reports' => finrap_list_report_snapshots($company, $resolvedProjectNo),
+			'report_url' => 'finrap.php?company=' . rawurlencode($company) . '&project_no=' . rawurlencode($resolvedProjectNo) . '&report_id=' . rawurlencode($reportId),
 		]);
 	} catch (Throwable $error) {
 		index_json_response(['ok' => false, 'error' => 'Genereren mislukt: ' . $error->getMessage()], 500);
 	}
+}
+
+if (($_GET['action'] ?? '') === 'delete_report') {
+	$company = trim((string) ($_POST['company'] ?? ''));
+	$projectNo = trim((string) ($_POST['project_no'] ?? ''));
+	$reportId = trim((string) ($_POST['report_id'] ?? ''));
+
+	if ($company === '' || !in_array($company, $companies, true) || $projectNo === '' || $reportId === '') {
+		index_json_response(['ok' => false, 'error' => 'Ongeldige invoer.'], 400);
+	}
+
+	$deleted = finrap_delete_report_snapshot($company, $projectNo, $reportId);
+	if (!$deleted) {
+		index_json_response(['ok' => false, 'error' => 'Rapport verwijderen mislukt of bestaat niet.'], 404);
+	}
+
+	index_json_response([
+		'ok' => true,
+		'reports' => finrap_list_report_snapshots($company, $projectNo),
+	]);
 }
 ?>
 <!doctype html>
@@ -459,6 +477,103 @@ if (($_GET['action'] ?? '') === 'generate_month') {
 		.recent-project-meta {
 			font-size: 12px;
 			color: var(--muted);
+		}
+
+		.report-list {
+			margin: 12px 0 0;
+			padding: 0;
+			list-style: none;
+			display: grid;
+			gap: 8px;
+		}
+
+		.report-item {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			gap: 8px;
+			padding: 8px 10px;
+			border: 1px solid #e2e8f0;
+			border-radius: 10px;
+			background: #fff;
+		}
+
+		.report-item-meta {
+			font-size: 13px;
+			color: var(--muted);
+		}
+
+		.report-item-actions {
+			display: flex;
+			gap: 6px;
+			flex-shrink: 0;
+		}
+
+		.btn-danger-icon {
+			background: #fff5f5;
+			border: 1px solid #fecaca;
+			color: #b42318;
+			min-height: 34px;
+			padding: 4px 10px;
+			font-size: 16px;
+		}
+
+		.confirm-overlay {
+			position: fixed;
+			inset: 0;
+			background: rgba(15, 23, 42, 0.58);
+			display: none;
+			align-items: center;
+			justify-content: center;
+			z-index: 12000;
+			padding: 16px;
+		}
+
+		.confirm-overlay.is-visible {
+			display: flex;
+		}
+
+		.confirm-dialog {
+			width: min(520px, 96vw);
+			background: #ffffff;
+			border-radius: 12px;
+			overflow: hidden;
+			border: 1px solid #cbd5e1;
+			box-shadow: 0 24px 60px rgba(15, 23, 42, 0.35);
+		}
+
+		.confirm-topbar {
+			padding: 10px 12px;
+			font-weight: 700;
+			color: #ffffff;
+			min-height: 50px;
+		}
+
+		.confirm-topbar.is-red {
+			background: #b42318;
+		}
+
+		.confirm-topbar.is-hazard {
+			background: repeating-linear-gradient(45deg,
+					#111111 0,
+					#111111 14px,
+					#facc15 14px,
+					#facc15 28px);
+			color: #111111;
+			text-shadow: 0 1px 0 rgba(255, 255, 255, 0.3);
+		}
+
+		.confirm-body {
+			padding: 14px 12px;
+			font-size: 14px;
+			color: #1f2937;
+		}
+
+		.confirm-actions {
+			display: flex;
+			justify-content: flex-end;
+			gap: 8px;
+			padding: 0 12px 12px;
 		}
 
 		.grid {
@@ -787,7 +902,7 @@ if (($_GET['action'] ?? '') === 'generate_month') {
 		<section class="hero">
 			<img src="logo-website.png" alt="KVT logo">
 			<h1>Financieel Rapport</h1>
-			<p>Kies bedrijf, zoek project, genereer maand en open of print het rapport.</p>
+			<p>Kies bedrijf, zoek project, genereer de huidige stand en open een opgeslagen rapport.</p>
 		</section>
 
 		<div class="workspace-grid">
@@ -816,8 +931,7 @@ if (($_GET['action'] ?? '') === 'generate_month') {
 			</section>
 
 			<aside class="panel sidebar-panel">
-				<h2 class="panel-title">Recent gevonden projecten</h2>
-				<p class="panel-subtitle">Gesorteerd op laatst opgezocht voor gebruiker: <?= htmlspecialchars($userEmail !== '' ? $userEmail : 'onbekend') ?></p>
+				<h2 class="panel-title">Recent opgezochte projecten</h2>
 				<ul id="recentProjectsList" class="recent-project-list"></ul>
 			</aside>
 		</div>
@@ -846,6 +960,32 @@ if (($_GET['action'] ?? '') === 'generate_month') {
 		</div>
 	</div>
 
+	<div id="confirmDeleteStep1" class="confirm-overlay" role="dialog" aria-modal="true"
+		aria-labelledby="confirmDeleteStep1Title">
+		<div class="confirm-dialog">
+			<div id="confirmDeleteStep1Title" class="confirm-topbar is-red"></div>
+			<div class="confirm-body">Je staat op het punt een Financieel Rapport te verwijderen. Dit is permanent. Weet
+				je het zeker?</div>
+			<div class="confirm-actions">
+				<button id="confirmDeleteStep1No" class="btn btn-print" type="button">Nee</button>
+				<button id="confirmDeleteStep1Yes" class="btn btn-main" type="button">Ja</button>
+			</div>
+		</div>
+	</div>
+
+	<div id="confirmDeleteStep2" class="confirm-overlay" role="dialog" aria-modal="true"
+		aria-labelledby="confirmDeleteStep2Title">
+		<div class="confirm-dialog">
+			<div id="confirmDeleteStep2Title" class="confirm-topbar is-hazard"></div>
+			<div class="confirm-body">Het verwijderen van een Financieel
+				Rapport kan niet ongedaan gemaakt worden! Weet je het echt zeker?</div>
+			<div class="confirm-actions">
+				<button id="confirmDeleteStep2No" class="btn btn-print" type="button">Nee</button>
+				<button id="confirmDeleteStep2Yes" class="btn btn-main" type="button">Ja</button>
+			</div>
+		</div>
+	</div>
+
 	<script>
 		(function ()
 		{
@@ -866,24 +1006,20 @@ if (($_GET['action'] ?? '') === 'generate_month') {
 			const finrapModalClose = document.getElementById('finrapModalClose');
 			const finrapModalPrint = document.getElementById('finrapModalPrint');
 			const finrapModalTitle = document.getElementById('finrapModalTitle');
+			const confirmDeleteStep1 = document.getElementById('confirmDeleteStep1');
+			const confirmDeleteStep2 = document.getElementById('confirmDeleteStep2');
+			const confirmDeleteStep1No = document.getElementById('confirmDeleteStep1No');
+			const confirmDeleteStep1Yes = document.getElementById('confirmDeleteStep1Yes');
+			const confirmDeleteStep2No = document.getElementById('confirmDeleteStep2No');
+			const confirmDeleteStep2Yes = document.getElementById('confirmDeleteStep2Yes');
 
 			let activeProjectNo = '';
 			let loaderTick = null;
 			let loaderStepsState = [];
 			let loaderCurrentStep = -1;
 			let recentProjects = Array.isArray(initialRecentProjects) ? initialRecentProjects : [];
-
-			function monthLabel (ym)
-			{
-				const m = {
-					'01': 'Januari', '02': 'Februari', '03': 'Maart', '04': 'April',
-					'05': 'Mei', '06': 'Juni', '07': 'Juli', '08': 'Augustus',
-					'09': 'September', '10': 'Oktober', '11': 'November', '12': 'December'
-				};
-				const parts = String(ym || '').split('-');
-				if (parts.length !== 2) { return ym; }
-				return (m[parts[1]] || parts[1]) + ' ' + parts[0];
-			}
+			let pendingDeleteReportId = '';
+			let currentProjectData = null;
 
 			function postForm (url, body)
 			{
@@ -908,12 +1044,12 @@ if (($_GET['action'] ?? '') === 'generate_month') {
 					];
 				} else
 				{
-					loaderTitle.textContent = 'FinRap maand laden';
+					loaderTitle.textContent = 'FinRap laden';
 					loaderStepsState = [
 						'Project verifiëren',
 						'Financiële data ophalen',
 						'Kostenregels opbouwen',
-						'Maandcache opslaan',
+						'Rapport opslaan',
 						'Rapport in modal openen'
 					];
 				}
@@ -1077,6 +1213,109 @@ if (($_GET['action'] ?? '') === 'generate_month') {
 				});
 			}
 
+			function formatReportTimestamp (value)
+			{
+				const dt = new Date(String(value || ''));
+				if (Number.isNaN(dt.getTime()))
+				{
+					return String(value || 'Onbekend moment');
+				}
+
+				return dt.toLocaleString('nl-NL', {
+					year: 'numeric',
+					month: '2-digit',
+					day: '2-digit',
+					hour: '2-digit',
+					minute: '2-digit',
+					second: '2-digit'
+				});
+			}
+
+			function closeDeleteModals ()
+			{
+				pendingDeleteReportId = '';
+				if (confirmDeleteStep1)
+				{
+					confirmDeleteStep1.classList.remove('is-visible');
+				}
+				if (confirmDeleteStep2)
+				{
+					confirmDeleteStep2.classList.remove('is-visible');
+				}
+			}
+
+			function askDeleteReport (reportId)
+			{
+				pendingDeleteReportId = String(reportId || '').trim();
+				if (pendingDeleteReportId === '' || !confirmDeleteStep1)
+				{
+					return;
+				}
+
+				confirmDeleteStep1.classList.add('is-visible');
+			}
+
+			function renderReportList (container, reports)
+			{
+				container.innerHTML = '';
+				const list = Array.isArray(reports) ? reports : [];
+
+				if (list.length === 0)
+				{
+					const empty = document.createElement('li');
+					empty.className = 'muted';
+					empty.textContent = 'Nog geen opgeslagen rapporten.';
+					container.appendChild(empty);
+					return;
+				}
+
+				list.forEach(function (entry)
+				{
+					const reportId = String((entry && entry.report_id) || '').trim();
+					if (reportId === '')
+					{
+						return;
+					}
+
+					const item = document.createElement('li');
+					item.className = 'report-item';
+
+					const meta = document.createElement('div');
+					meta.className = 'report-item-meta';
+					meta.textContent = formatReportTimestamp(entry.fetched_at || '') + ' (' + reportId + ')';
+
+					const actions = document.createElement('div');
+					actions.className = 'report-item-actions';
+
+					const openBtn = document.createElement('button');
+					openBtn.className = 'btn btn-open';
+					openBtn.type = 'button';
+					openBtn.textContent = 'Open';
+					openBtn.addEventListener('click', function ()
+					{
+						const url = 'finrap.php?company=' + encodeURIComponent(companySelect.value)
+							+ '&project_no=' + encodeURIComponent(activeProjectNo)
+							+ '&report_id=' + encodeURIComponent(reportId);
+						openFinrapModal(url, 'Financieel Rapport ' + activeProjectNo, false);
+					});
+
+					const deleteBtn = document.createElement('button');
+					deleteBtn.className = 'btn btn-danger-icon';
+					deleteBtn.type = 'button';
+					deleteBtn.textContent = '🗑️';
+					deleteBtn.addEventListener('click', function ()
+					{
+						askDeleteReport(reportId);
+					});
+
+					actions.appendChild(openBtn);
+					actions.appendChild(deleteBtn);
+					item.appendChild(meta);
+					item.appendChild(actions);
+					container.appendChild(item);
+				});
+			}
+
 			function normalizeRecentProjects (items)
 			{
 				if (!Array.isArray(items))
@@ -1206,36 +1445,10 @@ if (($_GET['action'] ?? '') === 'generate_month') {
 				}
 			}
 
-			function buildMonthSelect (months)
-			{
-				const select = document.createElement('select');
-				select.id = 'cachedMonthSelect';
-
-				const list = Array.isArray(months) ? months : [];
-				if (list.length === 0)
-				{
-					const opt = document.createElement('option');
-					opt.value = '';
-					opt.textContent = 'Nog geen gecachte maanden';
-					select.appendChild(opt);
-					return select;
-				}
-
-				list.forEach(function (entry)
-				{
-					const ym = String(entry.year_month || '');
-					const opt = document.createElement('option');
-					opt.value = ym;
-					opt.textContent = monthLabel(ym);
-					select.appendChild(opt);
-				});
-
-				return select;
-			}
-
-			function renderProject (project, cachedMonths)
+			function renderProject (project, reports)
 			{
 				const no = String((project && project.No) || activeProjectNo || '').trim();
+				currentProjectData = project || {};
 				activeProjectNo = no;
 				projectArea.innerHTML = '';
 
@@ -1254,86 +1467,36 @@ if (($_GET['action'] ?? '') === 'generate_month') {
 				meta.textContent = customerNo !== '' ? ('Debiteur: ' + customerNo + (customerName ? ' - ' + customerName : '')) : 'Debiteur: niet beschikbaar';
 				card.appendChild(meta);
 
-				const monthInputLabel = document.createElement('label');
-				monthInputLabel.textContent = 'Genereer specifieke maand';
-				monthInputLabel.setAttribute('for', 'generateMonthInput');
-				monthInputLabel.style.marginTop = '12px';
-				card.appendChild(monthInputLabel);
-
-				const monthInput = document.createElement('input');
-				monthInput.id = 'generateMonthInput';
-				monthInput.type = 'month';
-				monthInput.value = new Date().toISOString().slice(0, 7);
-				card.appendChild(monthInput);
+				const generateLabel = document.createElement('label');
+				generateLabel.textContent = 'Genereer huidige stand';
+				generateLabel.style.marginTop = '12px';
+				card.appendChild(generateLabel);
 
 				const generateBtn = document.createElement('button');
 				generateBtn.className = 'btn btn-alt';
 				generateBtn.type = 'button';
-				generateBtn.textContent = 'Genereer maand en open rapport';
 				generateBtn.style.marginTop = '10px';
+				generateBtn.textContent = 'Genereer rapport en open';
 				card.appendChild(generateBtn);
 
-				const cachedLabel = document.createElement('label');
-				cachedLabel.textContent = 'Gecachte maanden';
-				cachedLabel.setAttribute('for', 'cachedMonthSelect');
-				cachedLabel.style.marginTop = '14px';
-				card.appendChild(cachedLabel);
+				const reportsLabel = document.createElement('label');
+				reportsLabel.textContent = 'Bestaande rapporten';
+				reportsLabel.style.marginTop = '14px';
+				card.appendChild(reportsLabel);
 
-				const cachedSelect = buildMonthSelect(cachedMonths);
-				card.appendChild(cachedSelect);
-
-				const actionWrap = document.createElement('div');
-				actionWrap.className = 'row-actions';
-				actionWrap.style.marginTop = '10px';
-
-				const openBtn = document.createElement('button');
-				openBtn.className = 'btn btn-open';
-				openBtn.type = 'button';
-				openBtn.textContent = 'Open bestaand rapport';
-
-				const printBtn = document.createElement('button');
-				printBtn.className = 'btn btn-print';
-				printBtn.type = 'button';
-				printBtn.textContent = 'Open + print';
-
-				actionWrap.appendChild(openBtn);
-				actionWrap.appendChild(printBtn);
-				card.appendChild(actionWrap);
-
-				const monthList = document.createElement('ul');
-				monthList.className = 'month-list';
-				if (!Array.isArray(cachedMonths) || cachedMonths.length === 0)
-				{
-					const li = document.createElement('li');
-					li.innerHTML = '<span class="muted">Nog geen maandcache voor dit project.</span><span></span>';
-					monthList.appendChild(li);
-				} else
-				{
-					cachedMonths.forEach(function (entry)
-					{
-						const li = document.createElement('li');
-						li.innerHTML = '<span>' + monthLabel(String(entry.year_month || '')) + '</span><span class="muted">' + String(entry.fetched_at || '') + '</span>';
-						monthList.appendChild(li);
-					});
-				}
-				card.appendChild(monthList);
+				const reportList = document.createElement('ul');
+				reportList.className = 'report-list';
+				card.appendChild(reportList);
+				renderReportList(reportList, reports);
 
 				generateBtn.addEventListener('click', function ()
 				{
-					const ym = String(monthInput.value || '').trim();
-					if (!/^\d{4}-\d{2}$/.test(ym))
-					{
-						setStatus('Kies eerst een geldige maand.', true);
-						return;
-					}
-
-					setStatus('Genereren van ' + monthLabel(ym) + '...', false);
+					setStatus('Genereren van huidige stand...', false);
 					generateBtn.disabled = true;
-					showLoader('generate', 'FinRap voor ' + no + ' - ' + monthLabel(ym));
-					postForm('index.php?action=generate_month', {
+					showLoader('generate', 'FinRap voor ' + no + ' - huidige stand');
+					postForm('index.php?action=generate_report', {
 						company: companySelect.value,
-						project_no: activeProjectNo,
-						year_month: ym
+						project_no: activeProjectNo
 					}).then(function (json)
 					{
 						generateBtn.disabled = false;
@@ -1344,12 +1507,12 @@ if (($_GET['action'] ?? '') === 'generate_month') {
 							return;
 						}
 
-						finalizeLoader('Maand gereed, rapport wordt geopend...');
-						setStatus('Maand gegenereerd: ' + monthLabel(ym), false);
-						renderProject(project, json.cached_months || []);
+						finalizeLoader('Rapport gereed, wordt geopend...');
+						setStatus('Rapport gegenereerd.', false);
+						renderProject(project, json.reports || []);
 						if (json.report_url)
 						{
-							openFinrapModal(json.report_url, 'Financieel Rapport ' + activeProjectNo + ' - ' + monthLabel(ym), false);
+							openFinrapModal(json.report_url, 'Financieel Rapport ' + activeProjectNo, false);
 						}
 						window.setTimeout(hideLoader, 320);
 					}).catch(function (error)
@@ -1359,23 +1522,6 @@ if (($_GET['action'] ?? '') === 'generate_month') {
 						setStatus('Netwerkfout: ' + error.message, true);
 					});
 				});
-
-				function openReport (withPrint)
-				{
-					const ym = String(cachedSelect.value || '').trim();
-					if (!/^\d{4}-\d{2}$/.test(ym))
-					{
-						setStatus('Selecteer eerst een gecachte maand.', true);
-						return;
-					}
-					let url = 'finrap.php?company=' + encodeURIComponent(companySelect.value)
-						+ '&project_no=' + encodeURIComponent(activeProjectNo)
-						+ '&year_month=' + encodeURIComponent(ym);
-					openFinrapModal(url, 'Financieel Rapport ' + activeProjectNo + ' - ' + monthLabel(ym), withPrint);
-				}
-
-				openBtn.addEventListener('click', function () { openReport(false); });
-				printBtn.addEventListener('click', function () { openReport(true); });
 
 				projectArea.appendChild(card);
 			}
@@ -1414,7 +1560,7 @@ if (($_GET['action'] ?? '') === 'generate_month') {
 
 					finalizeLoader('Project gevonden.');
 					setStatus('Project gevonden: ' + String(json.project_no || projectNo), false);
-					renderProject(json.project || {}, json.cached_months || []);
+					renderProject(json.project || {}, json.reports || []);
 					window.setTimeout(hideLoader, 240);
 				}).catch(function (error)
 				{
@@ -1436,6 +1582,65 @@ if (($_GET['action'] ?? '') === 'generate_month') {
 
 			recentProjects = normalizeRecentProjects(recentProjects);
 			renderRecentProjects();
+
+			if (confirmDeleteStep1No)
+			{
+				confirmDeleteStep1No.addEventListener('click', closeDeleteModals);
+			}
+
+			if (confirmDeleteStep2No)
+			{
+				confirmDeleteStep2No.addEventListener('click', closeDeleteModals);
+			}
+
+			if (confirmDeleteStep1Yes)
+			{
+				confirmDeleteStep1Yes.addEventListener('click', function ()
+				{
+					if (confirmDeleteStep1)
+					{
+						confirmDeleteStep1.classList.remove('is-visible');
+					}
+					if (confirmDeleteStep2)
+					{
+						confirmDeleteStep2.classList.add('is-visible');
+					}
+				});
+			}
+
+			if (confirmDeleteStep2Yes)
+			{
+				confirmDeleteStep2Yes.addEventListener('click', function ()
+				{
+					const reportId = String(pendingDeleteReportId || '').trim();
+					if (reportId === '')
+					{
+						closeDeleteModals();
+						return;
+					}
+
+					postForm('index.php?action=delete_report', {
+						company: companySelect.value,
+						project_no: activeProjectNo,
+						report_id: reportId
+					}).then(function (json)
+					{
+						closeDeleteModals();
+						if (!json.ok)
+						{
+							setStatus(json.error || 'Rapport verwijderen mislukt.', true);
+							return;
+						}
+
+						setStatus('Rapport verwijderd.', false);
+						renderProject(currentProjectData || {}, json.reports || []);
+					}).catch(function (error)
+					{
+						closeDeleteModals();
+						setStatus('Netwerkfout: ' + error.message, true);
+					});
+				});
+			}
 
 			if (finrapModalClose)
 			{
@@ -1467,6 +1672,12 @@ if (($_GET['action'] ?? '') === 'generate_month') {
 
 			window.addEventListener('keydown', function (event)
 			{
+				if (event.key === 'Escape' && ((confirmDeleteStep1 && confirmDeleteStep1.classList.contains('is-visible')) || (confirmDeleteStep2 && confirmDeleteStep2.classList.contains('is-visible'))))
+				{
+					closeDeleteModals();
+					return;
+				}
+
 				if (event.key === 'Escape' && finrapModalOverlay && finrapModalOverlay.classList.contains('is-visible'))
 				{
 					closeFinrapModal();

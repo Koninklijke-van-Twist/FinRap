@@ -43,6 +43,24 @@ function finrap_cache_path(string $company, string $projectNo, string $yearMonth
     return finrap_cache_dir() . DIRECTORY_SEPARATOR . $safeCompany . '_' . $safeProject . '_' . $safeMonth . '.json';
 }
 
+function finrap_generate_report_id(): string
+{
+    try {
+        return gmdate('Ymd_His') . '_' . bin2hex(random_bytes(3));
+    } catch (Throwable $ignoredRandomError) {
+        return gmdate('Ymd_His') . '_' . substr(uniqid('', true), -6);
+    }
+}
+
+function finrap_report_cache_path(string $company, string $projectNo, string $reportId): string
+{
+    $safeCompany = finrap_normalize_company($company);
+    $safeProject = preg_replace('/[^a-z0-9_-]/i', '_', finrap_normalize_project_no($projectNo));
+    $safeReportId = preg_replace('/[^a-z0-9_-]/i', '', strtolower(trim($reportId)));
+
+    return finrap_cache_dir() . DIRECTORY_SEPARATOR . $safeCompany . '_' . $safeProject . '_ts_' . $safeReportId . '.json';
+}
+
 function finrap_load(string $company, string $projectNo, string $yearMonth): ?array
 {
     $path = finrap_cache_path($company, $projectNo, $yearMonth);
@@ -68,6 +86,92 @@ function finrap_save(string $company, string $projectNo, string $yearMonth, arra
     }
 
     return file_put_contents($path, $json, LOCK_EX) !== false;
+}
+
+function finrap_save_report_snapshot(string $company, string $projectNo, array $data, ?string $reportId = null): ?string
+{
+    $finalReportId = trim((string) ($reportId ?? ''));
+    if ($finalReportId === '') {
+        $finalReportId = finrap_generate_report_id();
+    }
+
+    $path = finrap_report_cache_path($company, $projectNo, $finalReportId);
+    $payload = $data;
+    $payload['report_id'] = $finalReportId;
+    if (!isset($payload['fetched_at']) || trim((string) ($payload['fetched_at'] ?? '')) === '') {
+        $payload['fetched_at'] = gmdate('c');
+    }
+
+    $json = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
+    if (!is_string($json)) {
+        return null;
+    }
+
+    $ok = file_put_contents($path, $json, LOCK_EX) !== false;
+    return $ok ? $finalReportId : null;
+}
+
+function finrap_load_report_snapshot(string $company, string $projectNo, string $reportId): ?array
+{
+    $path = finrap_report_cache_path($company, $projectNo, $reportId);
+    if (!is_file($path)) {
+        return null;
+    }
+
+    $raw = @file_get_contents($path);
+    if (!is_string($raw) || trim($raw) === '') {
+        return null;
+    }
+
+    $decoded = json_decode($raw, true);
+    return is_array($decoded) ? $decoded : null;
+}
+
+function finrap_delete_report_snapshot(string $company, string $projectNo, string $reportId): bool
+{
+    $path = finrap_report_cache_path($company, $projectNo, $reportId);
+    if (!is_file($path)) {
+        return false;
+    }
+
+    return @unlink($path);
+}
+
+function finrap_list_report_snapshots(string $company, string $projectNo): array
+{
+    $dir = finrap_cache_dir();
+    $safeCompany = finrap_normalize_company($company);
+    $safeProject = preg_replace('/[^a-z0-9_-]/i', '_', finrap_normalize_project_no($projectNo));
+    $prefix = $safeCompany . '_' . $safeProject . '_ts_';
+
+    $entries = @scandir($dir);
+    if (!is_array($entries)) {
+        return [];
+    }
+
+    $result = [];
+    foreach ($entries as $entry) {
+        if (!str_starts_with($entry, $prefix) || !str_ends_with($entry, '.json')) {
+            continue;
+        }
+
+        $reportId = substr($entry, strlen($prefix), -5);
+        if (!preg_match('/^[a-z0-9_-]+$/i', $reportId)) {
+            continue;
+        }
+
+        $payload = finrap_load_report_snapshot($company, $projectNo, $reportId);
+        $result[] = [
+            'report_id' => $reportId,
+            'fetched_at' => is_array($payload) ? (string) ($payload['fetched_at'] ?? '') : '',
+        ];
+    }
+
+    usort($result, static function (array $left, array $right): int {
+        return strcmp((string) ($right['fetched_at'] ?? ''), (string) ($left['fetched_at'] ?? ''));
+    });
+
+    return $result;
 }
 
 function finrap_list_cached_months(string $company, string $projectNo): array
@@ -423,20 +527,22 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
         }
 
         if ((bool) ($taskRow['Is_Total_Row'] ?? false)) {
+            $budgetTotal = 0.0;
+            $bookedTotal = 0.0;
+            $obligationTotal = 0.0;
+            $isGlobalTotalRow = strcasecmp((string) ($taskRow['Cost_Group_Code'] ?? ''), '000-000-000') === 0;
             $range = finrap_parse_totaling_range((string) ($taskRow['Totaling'] ?? ''));
-            if ($range !== null) {
-                $budgetTotal = 0.0;
-                $bookedTotal = 0.0;
-                $obligationTotal = 0.0;
-
+            if ($isGlobalTotalRow || $range !== null) {
                 foreach ($bookingRows as $bookingRow) {
                     if (!is_array($bookingRow)) {
                         continue;
                     }
 
-                    $bookingTaskNo = (string) ($bookingRow['Cost_Group_Code'] ?? '');
-                    if (!finrap_task_no_in_range($bookingTaskNo, $range)) {
-                        continue;
+                    if (!$isGlobalTotalRow) {
+                        $bookingTaskNo = (string) ($bookingRow['Cost_Group_Code'] ?? '');
+                        if (!finrap_task_no_in_range($bookingTaskNo, $range)) {
+                            continue;
+                        }
                     }
 
                     $budgetTotal = finance_add_amount($budgetTotal, finance_to_float($bookingRow['Budget_Cost'] ?? 0.0));

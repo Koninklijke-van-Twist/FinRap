@@ -43,23 +43,65 @@ function finrap_month_label(string $yearMonth): string
     return ($months[$month] ?? $month) . ' ' . $year;
 }
 
+function finrap_format_report_datetime(string $rawDateTime): string
+{
+    $value = trim($rawDateTime);
+    if ($value === '') {
+        return '';
+    }
+
+    try {
+        $dt = new DateTimeImmutable($value);
+        $dt = $dt->setTimezone(new DateTimeZone('Europe/Amsterdam'));
+    } catch (Throwable $ignoredDateParseError) {
+        return $value;
+    }
+
+    $months = [
+        '01' => 'januari',
+        '02' => 'februari',
+        '03' => 'maart',
+        '04' => 'april',
+        '05' => 'mei',
+        '06' => 'juni',
+        '07' => 'juli',
+        '08' => 'augustus',
+        '09' => 'september',
+        '10' => 'oktober',
+        '11' => 'november',
+        '12' => 'december',
+    ];
+
+    $monthNumber = $dt->format('m');
+    $monthLabel = $months[$monthNumber] ?? $monthNumber;
+
+    return $dt->format('j') . ' ' . $monthLabel . ' ' . $dt->format('Y, H:i');
+}
+
 /**
  * Page load
  */
 $company = trim((string) ($_GET['company'] ?? ''));
 $projectNo = trim((string) ($_GET['project_no'] ?? ''));
+$reportId = trim((string) ($_GET['report_id'] ?? ''));
 $yearMonth = trim((string) ($_GET['year_month'] ?? ''));
 $autoPrint = (string) ($_GET['print'] ?? '') === '1';
 $embedMode = (string) ($_GET['embed'] ?? '') === '1';
 
 $report = null;
 $error = null;
-if ($company === '' || $projectNo === '' || !preg_match('/^\d{4}-\d{2}$/', $yearMonth)) {
+if ($company === '' || $projectNo === '') {
     $error = 'Ongeldige parameters. Open dit rapport via de startpagina.';
 } else {
-    $report = finrap_load($company, $projectNo, $yearMonth);
+    if ($reportId !== '') {
+        $report = finrap_load_report_snapshot($company, $projectNo, $reportId);
+    } elseif (preg_match('/^\d{4}-\d{2}$/', $yearMonth)) {
+        // Legacy fallback for old month-based URLs.
+        $report = finrap_load($company, $projectNo, $yearMonth);
+    }
+
     if (!is_array($report)) {
-        $error = 'Geen cache gevonden voor dit project en deze maand. Genereer de maand eerst op de startpagina.';
+        $error = 'Geen opgeslagen rapport gevonden voor dit project. Genereer eerst een rapport op de startpagina.';
     }
 }
 
@@ -67,7 +109,6 @@ $project = is_array($report['project'] ?? null) ? $report['project'] : [];
 $summary = is_array($report['summary'] ?? null) ? $report['summary'] : [];
 $modal = is_array($report['project_modal'] ?? null) ? $report['project_modal'] : [];
 $taskRows = is_array($modal['task_rows'] ?? null) ? $modal['task_rows'] : [];
-$taskTotal = is_array($modal['task_rows_total'] ?? null) ? $modal['task_rows_total'] : [];
 
 $reportProjectNo = (string) ($report['project_no'] ?? $projectNo);
 $description = (string) ($project['Description'] ?? '');
@@ -77,6 +118,7 @@ $customer = trim($customerNo . ($customerName !== '' ? ' - ' . $customerName : '
 $projectManager = (string) ($project['Project_Manager'] ?? $project['Person_Responsible'] ?? '');
 $orderReference = (string) ($project['Your_Reference'] ?? $project['LVS_Your_reference'] ?? '');
 $createdAt = (string) ($report['fetched_at'] ?? '');
+$createdAtFormatted = finrap_format_report_datetime($createdAt);
 $contractValue = (float) ($modal['contract_value'] ?? 0.0);
 $totalDirectCost = (float) ($summary['expected_costs'] ?? 0.0);
 $grossProfit = $contractValue - $totalDirectCost;
@@ -362,12 +404,6 @@ $installmentsReceived = (float) ($modal['installments_received'] ?? 0.0);
             background: #eff6ff;
         }
 
-        .project-cost-group-table tbody tr.is-grand-total-row td {
-            font-weight: 700;
-            background: #dbeafe;
-            border-top: 2px solid var(--kvt-perkins-blue);
-        }
-
         .is-positive {
             color: #0f7a34;
             font-weight: 700;
@@ -494,6 +530,10 @@ $installmentsReceived = (float) ($modal['installments_received'] ?? 0.0);
                             <div class="project-field">
                                 <div class="project-field-label">Description</div>
                                 <div class="project-field-value"><?= htmlspecialchars($description) ?></div>
+                            </div>
+                            <div class="project-field">
+                                <div class="project-field-label">Rapport gemaakt op</div>
+                                <div class="project-field-value"><?= htmlspecialchars($createdAtFormatted) ?></div>
                             </div>
                         </div>
                     </section>
@@ -631,30 +671,6 @@ $installmentsReceived = (float) ($modal['installments_received'] ?? 0.0);
                                         </td>
                                     </tr>
                                 <?php endforeach; ?>
-                                <?php if ($taskTotal !== []): ?>
-                                    <tr class="is-grand-total-row">
-                                        <td><?= htmlspecialchars((string) ($taskTotal['Cost_Group_Code'] ?? 'TOTAL')) ?></td>
-                                        <td class="is-description">
-                                            <?= htmlspecialchars((string) ($taskTotal['Cost_Group_Description'] ?? 'Totaal alle regels')) ?>
-                                        </td>
-                                        <td class="is-right">
-                                            <?= htmlspecialchars(finrap_format_currency((float) ($taskTotal['Budget_Cost'] ?? 0.0))) ?>
-                                        </td>
-                                        <td class="is-right">
-                                            <?= htmlspecialchars(finrap_format_currency((float) ($taskTotal['EAC'] ?? 0.0))) ?>
-                                        </td>
-                                        <td class="is-right">
-                                            <?= htmlspecialchars(finrap_format_currency((float) ($taskTotal['Booked_Cost'] ?? 0.0))) ?>
-                                        </td>
-                                        <td class="is-right">
-                                            <?= htmlspecialchars(finrap_format_currency((float) ($taskTotal['Entered_Obligations'] ?? 0.0))) ?>
-                                        </td>
-                                        <?php $totalVariance = (float) ($taskTotal['Variance_Budget_EAC'] ?? 0.0); ?>
-                                        <td class="is-right <?= $totalVariance >= 0 ? 'is-positive' : 'is-negative' ?>">
-                                            <?= htmlspecialchars(finrap_format_currency($totalVariance)) ?>
-                                        </td>
-                                    </tr>
-                                <?php endif; ?>
                             </tbody>
                         </table>
                     </section>
