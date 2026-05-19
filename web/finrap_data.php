@@ -316,7 +316,7 @@ function finrap_fetch_project(string $company, string $projectNo, int $ttl = 300
     $auth = auth_get_auth_for_environment($environment);
 
     $url = finrap_company_entity_url_with_query($baseUrl, $environment, $company, 'Projecten', [
-        '$select' => 'No,Description,Bill_to_Customer_No,Bill_to_Name,Sell_to_Customer_No,Sell_to_Customer_Name,Project_Manager,Person_Responsible,KVT_Sales_Person_Code,Your_Reference,LVS_Your_reference,Creation_Date,Ending_Date',
+        '$select' => 'No,Description,Bill_to_Customer_No,Bill_to_Name,Sell_to_Customer_No,Sell_to_Customer_Name,Project_Manager,Person_Responsible,KVT_Sales_Person_Code,Your_Reference,LVS_Your_reference,Creation_Date,Ending_Date,Percent_Completed,Recog_Profit_Amount',
         '$filter' => "No eq '" . str_replace("'", "''", $projectNoText) . "'",
     ]);
 
@@ -354,7 +354,7 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
 
     try {
         $contractUrl = finrap_company_entity_url_with_query($baseUrl, $environment, $company, 'FactureerbareProjectPlanningsRegels', [
-            '$select' => 'Job_No,Line_Type,Line_Amount_LCY',
+            '$select' => 'Job_No,Line_No,Line_Type,Description,Line_Amount_LCY,Planning_Date,Invoiced_Amount_LCY,LVS_Document_Status',
             '$filter' => $projectFilter,
         ]);
         $contractRows = odata_get_all($contractUrl, $auth, $ttl);
@@ -362,6 +362,7 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
         $contractRows = [];
     }
 
+    $termijnLines = [];
     foreach ($contractRows as $contractRow) {
         if (!is_array($contractRow)) {
             continue;
@@ -378,7 +379,23 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
             (float) ($modal['contract_value'] ?? 0.0),
             finance_to_float($contractRow['Line_Amount_LCY'] ?? 0.0)
         );
+
+        $termijnLines[] = [
+            'line_no'        => (int) ($contractRow['Line_No'] ?? 0),
+            'description'    => (string) ($contractRow['Description'] ?? ''),
+            'amount'         => finance_to_float($contractRow['Line_Amount_LCY'] ?? 0.0),
+            'planning_date'  => (string) ($contractRow['Planning_Date'] ?? ''),
+            'invoiced_amount' => finance_to_float($contractRow['Invoiced_Amount_LCY'] ?? 0.0),
+            'status'         => (string) ($contractRow['LVS_Document_Status'] ?? ''),
+        ];
     }
+
+    usort($termijnLines, static fn(array $a, array $b): int => $a['line_no'] <=> $b['line_no']);
+    foreach ($termijnLines as $termijnIdx => &$termijnLine) {
+        $termijnLine['termijn_no'] = $termijnIdx + 1;
+    }
+    unset($termijnLine);
+    $modal['termijn_lines'] = $termijnLines;
 
     try {
         $customerUrl = finrap_company_entity_url_with_query($baseUrl, $environment, $company, 'Customer_Ledger_Entries', [
@@ -507,6 +524,55 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
             finance_to_float($purchaseRow['Line_Amount'] ?? 0.0)
         );
     }
+
+    try {
+        $hoursUrl = finrap_company_entity_url_with_query($baseUrl, $environment, $company, 'Job_Task_Lines', [
+            '$select' => 'Job_No,Job_Task_No,Job_Task_Type,LVS_Budget_Hours_Quantity,LVS_Used_Hours_Quantity,LVS_Forecast_Hours_Quantity',
+            '$filter' => $projectFilter,
+        ]);
+        $hoursRows = odata_get_all($hoursUrl, $auth, $ttl);
+    } catch (Throwable $ignoredHoursLoadError) {
+        $hoursRows = [];
+    }
+
+    $hoursBudget = 0.0;
+    $hoursBooked = 0.0;
+    $hoursEstimated = 0.0;
+    $hoursGlobalTotalRow = null;
+    foreach ($hoursRows as $hoursRow) {
+        if (!is_array($hoursRow)) {
+            continue;
+        }
+
+        if (strcasecmp(trim((string) ($hoursRow['Job_Task_No'] ?? '')), '000-000-000') === 0) {
+            $hoursGlobalTotalRow = $hoursRow;
+            break;
+        }
+    }
+
+    if ($hoursGlobalTotalRow !== null) {
+        $hoursBudget = finance_to_float($hoursGlobalTotalRow['LVS_Budget_Hours_Quantity'] ?? 0.0);
+        $hoursBooked = finance_to_float($hoursGlobalTotalRow['LVS_Used_Hours_Quantity'] ?? 0.0);
+        $hoursEstimated = finance_to_float($hoursGlobalTotalRow['LVS_Forecast_Hours_Quantity'] ?? 0.0);
+    } else {
+        foreach ($hoursRows as $hoursRow) {
+            if (!is_array($hoursRow)) {
+                continue;
+            }
+
+            if (finrap_is_total_task_type((string) ($hoursRow['Job_Task_Type'] ?? ''))) {
+                continue;
+            }
+
+            $hoursBudget = finance_add_amount($hoursBudget, finance_to_float($hoursRow['LVS_Budget_Hours_Quantity'] ?? 0.0));
+            $hoursBooked = finance_add_amount($hoursBooked, finance_to_float($hoursRow['LVS_Used_Hours_Quantity'] ?? 0.0));
+            $hoursEstimated = finance_add_amount($hoursEstimated, finance_to_float($hoursRow['LVS_Forecast_Hours_Quantity'] ?? 0.0));
+        }
+    }
+
+    $modal['hours_budget'] = $hoursBudget;
+    $modal['hours_booked'] = $hoursBooked;
+    $modal['hours_estimated'] = $hoursEstimated;
 
     $bookingRows = [];
     foreach ($taskRowsByKey as $taskKey => $taskRow) {

@@ -13,6 +13,32 @@ require_once __DIR__ . '/finrap_data.php';
 /**
  * Functies
  */
+function finrap_format_hours(float $value): string
+{
+    return number_format($value, 1, ',', '.') . ' u';
+}
+
+function finrap_format_percent(float $value): string
+{
+    return number_format($value, 1, ',', '.') . '%';
+}
+
+function finrap_format_date_nl(string $isoDate): string
+{
+    $value = trim($isoDate);
+    if ($value === '') {
+        return '-';
+    }
+
+    try {
+        $dt = new DateTimeImmutable($value);
+    } catch (Throwable $ignoredDateError) {
+        return $isoDate;
+    }
+
+    return $dt->format('d-m-Y');
+}
+
 function finrap_format_currency(float $value): string
 {
     return '€ ' . number_format($value, 2, ',', '.');
@@ -91,13 +117,13 @@ function finrap_format_report_datetime(string $rawDateTime): string
 function finrap_cost_group_columns(): array
 {
     return [
-        ['key' => 'Cost_Group_Code', 'label' => 'Cost group code', 'is_right' => false],
-        ['key' => 'Cost_Group_Description', 'label' => 'Cost Group Description', 'is_right' => false],
-        ['key' => 'Budget_Cost', 'label' => 'Budget Cost', 'is_right' => true],
-        ['key' => 'EAC', 'label' => 'EAC', 'is_right' => true],
-        ['key' => 'Booked_Cost', 'label' => 'Booked Cost', 'is_right' => true],
-        ['key' => 'Entered_Obligations', 'label' => 'Entered Obligations', 'is_right' => true],
-        ['key' => 'Variance_Budget_EAC', 'label' => 'Variance Budget - EAC', 'is_right' => true],
+        ['key' => 'Cost_Group_Code', 'label' => 'Cost group code', 'is_right' => false, 'tooltip' => ''],
+        ['key' => 'Cost_Group_Description', 'label' => 'Cost Group Description', 'is_right' => false, 'tooltip' => ''],
+        ['key' => 'Budget_Cost', 'label' => 'Budget Cost', 'is_right' => true, 'tooltip' => 'Begrote kosten voor deze kostengroep'],
+        ['key' => 'EAC', 'label' => 'EAC', 'is_right' => true, 'tooltip' => 'Estimate At Completion: totale verwachte kosten aan einde project'],
+        ['key' => 'Booked_Cost', 'label' => 'Booked Cost', 'is_right' => true, 'tooltip' => 'Werkelijk geboekte kosten tot nu toe'],
+        ['key' => 'Entered_Obligations', 'label' => 'Entered Obligations', 'is_right' => true, 'tooltip' => 'Gereserveerde bedragen voor bestellingen/verplichtingen'],
+        ['key' => 'Variance_Budget_EAC', 'label' => 'Variance Budget - EAC', 'is_right' => true, 'tooltip' => 'Verschil tussen begroting en verwachte kosten'],
     ];
 }
 
@@ -125,7 +151,9 @@ function finrap_render_cost_group_table(array $taskRows, bool $totalsOnly = fals
     echo '<thead><tr>';
     foreach ($columns as $column) {
         $thClass = (bool) ($column['is_right'] ?? false) ? ' class="is-right"' : '';
-        echo '<th' . $thClass . '>' . htmlspecialchars((string) ($column['label'] ?? '')) . '</th>';
+        $tooltip = (string) ($column['tooltip'] ?? '');
+        $tooltipAttr = $tooltip !== '' ? ' data-tooltip="' . htmlspecialchars($tooltip) . '"' : '';
+        echo '<th' . $thClass . $tooltipAttr . '>' . htmlspecialchars((string) ($column['label'] ?? '')) . '</th>';
     }
     echo '</tr></thead>';
     echo '<tbody>';
@@ -244,6 +272,23 @@ $variance = (float) ($modal['budget_cost_total'] ?? 0.0);
 $orderResult = $grossProfit - $variance;
 $installmentsInvoiced = (float) ($summary['total_revenue'] ?? 0.0);
 $installmentsReceived = (float) ($modal['installments_received'] ?? 0.0);
+
+$hoursBudget = (float) ($modal['hours_budget'] ?? 0.0);
+$hoursEstimated = (float) ($modal['hours_estimated'] ?? 0.0);
+$hoursBooked = (float) ($modal['hours_booked'] ?? 0.0);
+$hoursToGo = $hoursEstimated - $hoursBooked;
+
+$finrapEpsilon = 0.000001;
+$grossProfitPct = abs($contractValue) > $finrapEpsilon ? ($grossProfit / $contractValue * 100.0) : 0.0;
+$orderResultPct = abs($contractValue) > $finrapEpsilon ? ($orderResult / $contractValue * 100.0) : 0.0;
+$variancePct = abs($contractValue) > $finrapEpsilon ? ($variance / $contractValue * 100.0) : 0.0;
+
+$expVariance = $variance - (float) ($summary['expected_costs'] ?? 0.0);
+$expOrderResult = $contractValue - (float) ($summary['expected_costs'] ?? 0.0);
+$pocPercent = (float) ($project['Percent_Completed'] ?? 0.0);
+$iprResult = (float) ($project['Recog_Profit_Amount'] ?? 0.0);
+
+$termijnLines = is_array($modal['termijn_lines'] ?? null) ? $modal['termijn_lines'] : [];
 ?>
 <!doctype html>
 <html lang="nl">
@@ -383,13 +428,15 @@ $installmentsReceived = (float) ($modal['installments_received'] ?? 0.0);
 
         .project-modal-body {
             flex: 1;
-            overflow: auto;
+            overflow-y: auto;
+            overflow-x: visible;
             background: #f8fbff;
             padding: 0;
         }
 
         body.embed-mode .project-modal-body {
-            overflow: auto;
+            overflow-y: auto;
+            overflow-x: visible;
         }
 
         body.embed-mode .project-close.project-close-back {
@@ -458,6 +505,7 @@ $installmentsReceived = (float) ($modal['installments_received'] ?? 0.0);
         .project-modal-cost-groups-section {
             padding: 0 20px 20px;
             background: #ffffff;
+            overflow: visible;
         }
 
         .project-modal-cost-groups-section {
@@ -471,7 +519,7 @@ $installmentsReceived = (float) ($modal['installments_received'] ?? 0.0);
             font-size: 12px;
             border: 1px solid #dbe3ee;
             border-radius: 10px;
-            overflow: hidden;
+            overflow: visible;
         }
 
         .project-metric-table thead th,
@@ -538,6 +586,57 @@ $installmentsReceived = (float) ($modal['installments_received'] ?? 0.0);
         .project-cost-group-table tbody td.is-zero {
             color: #64748b;
             font-weight: 700;
+        }
+
+        [data-tooltip] {
+            position: relative;
+            cursor: help;
+            border-bottom: 1px dotted currentColor;
+        }
+
+        [data-tooltip]::after {
+            content: attr(data-tooltip);
+            position: absolute;
+            bottom: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 10000;
+            background: #1f2937;
+            color: #ffffff;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 400;
+            white-space: normal;
+            max-width: 200px;
+            letter-spacing: normal;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s ease;
+            margin-bottom: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        }
+
+        [data-tooltip]::before {
+            content: '';
+            position: absolute;
+            bottom: calc(100% - 2px);
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 10000;
+            width: 0;
+            height: 0;
+            border-left: 6px solid transparent;
+            border-right: 6px solid transparent;
+            border-top: 6px solid #1f2937;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s ease;
+        }
+
+        [data-tooltip]:hover::after,
+        [data-tooltip]:hover::before {
+            opacity: 1;
         }
 
         .error-box {
@@ -627,6 +726,136 @@ $installmentsReceived = (float) ($modal['installments_received'] ?? 0.0);
                 overflow: visible;
             }
         }
+        .analytics-blocks-section {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 12px;
+            padding: 0 20px 20px;
+            background: #ffffff;
+            overflow: visible;
+        }
+
+        .analytics-block {
+            border: 1px solid #dbe3ee;
+            border-radius: 10px;
+            overflow: visible;
+        }
+
+        .analytics-block-header {
+            background: var(--kvt-perkins-blue);
+            color: #ffffff;
+            font-weight: 700;
+            font-size: 12px;
+            padding: 8px 10px;
+        }
+
+        .analytics-block-body {
+            padding: 6px 0;
+        }
+
+        .analytics-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            gap: 8px;
+            padding: 5px 10px;
+            font-size: 12px;
+            border-top: 1px solid #f0f4fa;
+        }
+
+        .analytics-row:first-child {
+            border-top: 0;
+        }
+
+        .analytics-label {
+            color: #475569;
+            flex-shrink: 0;
+        }
+
+        .analytics-value {
+            color: #1f2937;
+            font-weight: 700;
+            text-align: right;
+            min-width: 0;
+        }
+
+        .analytics-value.is-positive {
+            color: #0a4e22;
+        }
+
+        .analytics-value.is-negative {
+            color: #661515;
+        }
+
+        .analytics-value.is-zero {
+            color: #64748b;
+        }
+
+        .termijn-list {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+        }
+
+        .termijn-item {
+            display: grid;
+            grid-template-columns: auto 1fr auto;
+            gap: 4px 8px;
+            align-items: start;
+            font-size: 11px;
+            padding: 5px 10px;
+            border-top: 1px solid #f0f4fa;
+            line-height: 1.4;
+        }
+
+        .termijn-item:first-child {
+            border-top: 0;
+        }
+
+        .termijn-no {
+            font-weight: 700;
+            color: var(--kvt-perkins-blue);
+            white-space: nowrap;
+        }
+
+        .termijn-meta {
+            color: #475569;
+        }
+
+        .termijn-status {
+            font-weight: 700;
+            white-space: nowrap;
+            color: #1f2937;
+        }
+
+        .termijn-amount {
+            grid-column: 2 / -1;
+            font-weight: 700;
+            color: #1f2937;
+        }
+
+        .termijn-empty {
+            padding: 10px;
+            font-size: 12px;
+            color: #94a3b8;
+            font-style: italic;
+        }
+
+        @media (max-width: 900px) {
+            .analytics-blocks-section {
+                grid-template-columns: 1fr;
+                padding-left: 16px;
+                padding-right: 16px;
+            }
+        }
+
+        @media (max-width: 600px) {
+            .analytics-blocks-section {
+                padding-left: 16px;
+                padding-right: 16px;
+            }
+        }
+
     </style>
 </head>
 
@@ -707,13 +936,13 @@ $installmentsReceived = (float) ($modal['installments_received'] ?? 0.0);
                         <table class="project-metric-table">
                             <thead>
                                 <tr>
-                                    <th class="is-right">Contract Value</th>
-                                    <th class="is-right">Total Direct Cost</th>
-                                    <th class="is-right">Gross Profit</th>
-                                    <th class="is-right">Variance Budget - EAC</th>
-                                    <th class="is-right">Order Result</th>
-                                    <th class="is-right">Installments Invoiced</th>
-                                    <th class="is-right">Installments Received</th>
+                                    <th class="is-right" data-tooltip="Totale contractwaarde met klant">Contract Value</th>
+                                    <th class="is-right" data-tooltip="Totale verwachte directe kosten">Total Direct Cost</th>
+                                    <th class="is-right" data-tooltip="Contractwaarde minus directe kosten">Gross Profit</th>
+                                    <th class="is-right" data-tooltip="Verschil tussen begrote en verwachte kosten">Variance Budget - EAC</th>
+                                    <th class="is-right" data-tooltip="Netto winst na alle kosten en verwachtingen">Order Result</th>
+                                    <th class="is-right" data-tooltip="Totaal gefactureerde bedrag tot nu toe">Installments Invoiced</th>
+                                    <th class="is-right" data-tooltip="Totaal ontvangen betalingen tot nu toe">Installments Received</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -746,6 +975,95 @@ $installmentsReceived = (float) ($modal['installments_received'] ?? 0.0);
 
                     <section class="project-modal-cost-groups-section">
                         <?php finrap_render_cost_group_table($taskRows, true, true); ?>
+                    </section>
+
+                    <section class="analytics-blocks-section">
+
+                        <div class="analytics-block">
+                            <div class="analytics-block-header">Uren &amp; marges</div>
+                            <div class="analytics-block-body">
+                                <div class="analytics-row">
+                                    <span class="analytics-label" data-tooltip="Gepland aantal uren voor het project">Budget Hours</span>
+                                    <span class="analytics-value"><?= htmlspecialchars(finrap_format_hours($hoursBudget)) ?></span>
+                                </div>
+                                <div class="analytics-row">
+                                    <span class="analytics-label" data-tooltip="Verwacht aantal uren op basis van huidige prognose">Estimated Hours</span>
+                                    <span class="analytics-value"><?= htmlspecialchars(finrap_format_hours($hoursEstimated)) ?></span>
+                                </div>
+                                <div class="analytics-row">
+                                    <span class="analytics-label" data-tooltip="Werkelijk geboekt aantal uren tot nu toe">Booked Hours</span>
+                                    <span class="analytics-value"><?= htmlspecialchars(finrap_format_hours($hoursBooked)) ?></span>
+                                </div>
+                                <div class="analytics-row">
+                                    <span class="analytics-label" data-tooltip="Resterende uren: Geschat - Geboekt">Hours to go</span>
+                                    <span class="analytics-value <?= finrap_currency_sign_class($hoursToGo) ?>"><?= htmlspecialchars(finrap_format_hours($hoursToGo)) ?></span>
+                                </div>
+                                <div class="analytics-row">
+                                    <span class="analytics-label" data-tooltip="Bruto winst in procenten van contractwaarde">Gross profit %</span>
+                                    <span class="analytics-value <?= finrap_currency_sign_class($grossProfitPct) ?>"><?= htmlspecialchars(finrap_format_percent($grossProfitPct)) ?></span>
+                                </div>
+                                <div class="analytics-row">
+                                    <span class="analytics-label" data-tooltip="Netto winst in procenten van contractwaarde">Order result %</span>
+                                    <span class="analytics-value <?= finrap_currency_sign_class($orderResultPct) ?>"><?= htmlspecialchars(finrap_format_percent($orderResultPct)) ?></span>
+                                </div>
+                                <div class="analytics-row">
+                                    <span class="analytics-label" data-tooltip="Verschil tussen budget en EAC in procenten van contractwaarde">Variance budget - EAC %</span>
+                                    <span class="analytics-value <?= finrap_currency_sign_class($variancePct) ?>"><?= htmlspecialchars(finrap_format_percent($variancePct)) ?></span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="analytics-block">
+                            <div class="analytics-block-header">Verwachte uitkomsten</div>
+                            <div class="analytics-block-body">
+                                <div class="analytics-row">
+                                    <span class="analytics-label" data-tooltip="Verwachte kosten minus begrote kosten">Exp. Variance Budget - EAC</span>
+                                    <span class="analytics-value <?= finrap_currency_sign_class($expVariance) ?>"><?= htmlspecialchars(finrap_format_currency($expVariance)) ?></span>
+                                </div>
+                                <div class="analytics-row">
+                                    <span class="analytics-label" data-tooltip="Contractwaarde minus verwachte kosten">Expected Order Result</span>
+                                    <span class="analytics-value <?= finrap_currency_sign_class($expOrderResult) ?>"><?= htmlspecialchars(finrap_format_currency($expOrderResult)) ?></span>
+                                </div>
+                                <div class="analytics-row">
+                                    <span class="analytics-label" data-tooltip="Gerealiseerde winst uit WIP-berekening, oftewel wat er tot nu toe overblijft">IPR result</span>
+                                    <span class="analytics-value <?= finrap_currency_sign_class($iprResult) ?>"><?= htmlspecialchars(finrap_format_currency($iprResult)) ?></span>
+                                </div>
+                                <div class="analytics-row">
+                                    <span class="analytics-label" data-tooltip="Voortgang in % van het project">POC</span>
+                                    <span class="analytics-value"><?= htmlspecialchars(finrap_format_percent($pocPercent)) ?></span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="analytics-block">
+                            <div class="analytics-block-header">Termijn facturen</div>
+                            <div class="analytics-block-body">
+                                <?php if (count($termijnLines) === 0): ?>
+                                    <div class="termijn-empty">Geen termijn facturen gevonden.</div>
+                                <?php else: ?>
+                                    <ul class="termijn-list">
+                                        <?php foreach ($termijnLines as $termijnLine): ?>
+                                            <?php
+                                            $termijnNo = (int) ($termijnLine['termijn_no'] ?? 0);
+                                            $termijnAmount = (float) ($termijnLine['amount'] ?? 0.0);
+                                            $termijnDate = finrap_format_date_nl((string) ($termijnLine['planning_date'] ?? ''));
+                                            $termijnStatus = trim((string) ($termijnLine['status'] ?? ''));
+                                            $termijnStatus = $termijnStatus !== '' ? $termijnStatus : (
+                                                (float) ($termijnLine['invoiced_amount'] ?? 0.0) > 0.000001 ? 'Gefactureerd' : 'Openstaand'
+                                            );
+                                            ?>
+                                            <li class="termijn-item">
+                                                <span class="termijn-no">Termijn <?= $termijnNo ?></span>
+                                                <span class="termijn-meta"><?= htmlspecialchars($termijnDate) ?></span>
+                                                <span class="termijn-status"><?= htmlspecialchars($termijnStatus) ?></span>
+                                                <span class="termijn-amount"><?= htmlspecialchars(finrap_format_currency($termijnAmount)) ?></span>
+                                            </li>
+                                        <?php endforeach; ?>
+                                    </ul>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+
                     </section>
 
                     <section class="project-modal-cost-groups-section">
