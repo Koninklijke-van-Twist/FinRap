@@ -323,6 +323,7 @@ function finrap_fetch_budget_hours_total(
     string $company,
     array $auth,
     string $projectFilter,
+    array $allowedTaskKeys,
     int $ttl
 ): ?float {
     if (trim(FINRAP_BUDGET_HOURS_ENTITY_SET) === '' || trim(FINRAP_BUDGET_HOURS_FIELD) === '') {
@@ -330,7 +331,6 @@ function finrap_fetch_budget_hours_total(
     }
 
     $hoursFilter = $projectFilter
-        . " and Job_Task_No eq '" . FINRAP_GLOBAL_TOTAL_TASK_NO . "'"
         . ' and ' . FINRAP_BUDGET_HOURS_FILTER_BASELINE_FIELD . ' eq true'
         . " and " . FINRAP_BUDGET_HOURS_FILTER_TYPE_FIELD . " eq '" . str_replace("'", "''", FINRAP_BUDGET_HOURS_FILTER_TYPE_VALUE) . "'"
         . " and " . FINRAP_BUDGET_HOURS_FILTER_RESOURCE_TYPE_FIELD . " eq '" . str_replace("'", "''", FINRAP_BUDGET_HOURS_FILTER_RESOURCE_TYPE_VALUE) . "'"
@@ -346,16 +346,41 @@ function finrap_fetch_budget_hours_total(
         return null;
     }
 
+    $allowedLookup = [];
+    foreach ($allowedTaskKeys as $allowedTaskKey) {
+        if (!is_string($allowedTaskKey) || trim($allowedTaskKey) === '') {
+            continue;
+        }
+        $allowedLookup[strtolower(trim($allowedTaskKey))] = true;
+    }
+
+    $totalHours = 0.0;
+    $hasRows = false;
     foreach ($hoursRows as $hoursRow) {
         if (!is_array($hoursRow)) {
             continue;
         }
 
-        if (strcasecmp(trim((string) ($hoursRow['Job_Task_No'] ?? '')), FINRAP_GLOBAL_TOTAL_TASK_NO) !== 0) {
+        $taskNo = trim((string) ($hoursRow['Job_Task_No'] ?? ''));
+        if ($taskNo === '') {
             continue;
         }
 
-        return finance_to_float($hoursRow[FINRAP_BUDGET_HOURS_FIELD] ?? 0.0);
+        if (FINRAP_FORMATTED_TASK_NOS_ONLY && !finrap_is_formatted_task_no($taskNo)) {
+            continue;
+        }
+
+        $taskKey = strtolower($taskNo);
+        if ($allowedLookup !== [] && !isset($allowedLookup[$taskKey])) {
+            continue;
+        }
+
+        $totalHours = finance_add_amount($totalHours, finance_to_float($hoursRow[FINRAP_BUDGET_HOURS_FIELD] ?? 0.0));
+        $hasRows = true;
+    }
+
+    if ($hasRows) {
+        return $totalHours;
     }
 
     return null;
@@ -476,12 +501,12 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
         );
 
         $termijnLines[] = [
-            'line_no'        => (int) ($contractRow['Line_No'] ?? 0),
-            'description'    => (string) ($contractRow['Description'] ?? ''),
-            'amount'         => finance_to_float($contractRow['Line_Amount_LCY'] ?? 0.0),
-            'planning_date'  => (string) ($contractRow['Planning_Date'] ?? ''),
+            'line_no' => (int) ($contractRow['Line_No'] ?? 0),
+            'description' => (string) ($contractRow['Description'] ?? ''),
+            'amount' => finance_to_float($contractRow['Line_Amount_LCY'] ?? 0.0),
+            'planning_date' => (string) ($contractRow['Planning_Date'] ?? ''),
             'invoiced_amount' => finance_to_float($contractRow['Invoiced_Amount_LCY'] ?? 0.0),
-            'status'         => (string) ($contractRow['LVS_Document_Status'] ?? ''),
+            'status' => (string) ($contractRow['LVS_Document_Status'] ?? ''),
         ];
     }
 
@@ -533,11 +558,9 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
         if ($taskNo === '') {
             continue;
         }
-        if (FINRAP_FORMATTED_TASK_NOS_ONLY && !finrap_is_formatted_task_no($taskNo)) {
-            continue;
-        }
 
         $taskKey = strtolower($taskNo);
+        $isDisplayRow = !FINRAP_FORMATTED_TASK_NOS_ONLY || finrap_is_formatted_task_no($taskNo);
         $taskRowsByKey[$taskKey] = [
             'Cost_Group_Code' => $taskNo,
             'Cost_Group_Description' => (string) ($taskRow['Description'] ?? ''),
@@ -549,6 +572,7 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
             'Entered_Obligations' => 0.0,
             'Variance_Budget_EAC' => 0.0,
             'Is_Total_Row' => finrap_is_total_task_type((string) ($taskRow['Job_Task_Type'] ?? '')),
+            'Is_Display_Row' => $isDisplayRow,
         ];
     }
 
@@ -569,9 +593,6 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
 
         $taskNo = trim((string) ($ledgerRow['Job_Task_No'] ?? ''));
         if ($taskNo === '') {
-            continue;
-        }
-        if (FINRAP_FORMATTED_TASK_NOS_ONLY && !finrap_is_formatted_task_no($taskNo)) {
             continue;
         }
 
@@ -605,9 +626,6 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
         if ($taskNo === '') {
             continue;
         }
-        if (FINRAP_FORMATTED_TASK_NOS_ONLY && !finrap_is_formatted_task_no($taskNo)) {
-            continue;
-        }
 
         $taskKey = strtolower($taskNo);
         if (!isset($taskRowsByKey[$taskKey])) {
@@ -618,6 +636,19 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
             (float) ($taskRowsByKey[$taskKey]['Entered_Obligations'] ?? 0.0),
             finance_to_float($purchaseRow['Line_Amount'] ?? 0.0)
         );
+    }
+
+    $bookingRows = [];
+    foreach ($taskRowsByKey as $taskKey => $taskRow) {
+        if (!is_array($taskRow)) {
+            continue;
+        }
+
+        if ((bool) ($taskRow['Is_Total_Row'] ?? false)) {
+            continue;
+        }
+
+        $bookingRows[$taskKey] = $taskRow;
     }
 
     try {
@@ -661,7 +692,7 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
         $hoursForecastFallback = finance_to_float($hoursGlobalTotalRow['LVS_Forecast_Hours_Quantity'] ?? 0.0);
     }
 
-    $hoursBudget = finrap_fetch_budget_hours_total($baseUrl, $environment, $company, $auth, $projectFilter, $ttl);
+    $hoursBudget = finrap_fetch_budget_hours_total($baseUrl, $environment, $company, $auth, $projectFilter, array_keys($bookingRows), $ttl);
     if ($hoursBudget === null) {
         $hoursBudget = $hoursBudgetFallback;
     }
@@ -675,19 +706,6 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
     $modal['hours_booked'] = $hoursBooked;
     $modal['hours_estimated'] = $hoursEstimated;
 
-    $bookingRows = [];
-    foreach ($taskRowsByKey as $taskKey => $taskRow) {
-        if (!is_array($taskRow)) {
-            continue;
-        }
-
-        if ((bool) ($taskRow['Is_Total_Row'] ?? false)) {
-            continue;
-        }
-
-        $bookingRows[$taskKey] = $taskRow;
-    }
-
     foreach ($taskRowsByKey as $taskKey => $taskRow) {
         if (!is_array($taskRow)) {
             continue;
@@ -697,19 +715,16 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
             $budgetTotal = 0.0;
             $bookedTotal = 0.0;
             $obligationTotal = 0.0;
-            $isGlobalTotalRow = strcasecmp((string) ($taskRow['Cost_Group_Code'] ?? ''), '000-000-000') === 0;
             $range = finrap_parse_totaling_range((string) ($taskRow['Totaling'] ?? ''));
-            if ($isGlobalTotalRow || $range !== null) {
+            if ($range !== null) {
                 foreach ($bookingRows as $bookingRow) {
                     if (!is_array($bookingRow)) {
                         continue;
                     }
 
-                    if (!$isGlobalTotalRow) {
-                        $bookingTaskNo = (string) ($bookingRow['Cost_Group_Code'] ?? '');
-                        if (!finrap_task_no_in_range($bookingTaskNo, $range)) {
-                            continue;
-                        }
+                    $bookingTaskNo = (string) ($bookingRow['Cost_Group_Code'] ?? '');
+                    if (!finrap_task_no_in_range($bookingTaskNo, $range)) {
+                        continue;
                     }
 
                     $budgetTotal = finance_add_amount($budgetTotal, finance_to_float($bookingRow['Budget_Cost'] ?? 0.0));
@@ -748,8 +763,44 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
         $obligationTotal = finance_add_amount($obligationTotal, finance_to_float($taskRow['Entered_Obligations'] ?? 0.0));
     }
 
+    $globalTotalRow = null;
+    foreach ($taskRowsByKey as $taskRow) {
+        if (!is_array($taskRow)) {
+            continue;
+        }
+
+        if (!(bool) ($taskRow['Is_Total_Row'] ?? false)) {
+            continue;
+        }
+
+        if (strcasecmp((string) ($taskRow['Cost_Group_Code'] ?? ''), FINRAP_GLOBAL_TOTAL_TASK_NO) !== 0) {
+            continue;
+        }
+
+        $globalTotalRow = $taskRow;
+        break;
+    }
+
+    $displayTaskRows = [];
+    foreach ($taskRowsByKey as $taskRow) {
+        if (!is_array($taskRow)) {
+            continue;
+        }
+
+        $isTotalRow = (bool) ($taskRow['Is_Total_Row'] ?? false);
+        $isDisplayRow = (bool) ($taskRow['Is_Display_Row'] ?? true);
+        if ($isTotalRow || $isDisplayRow) {
+            unset($taskRow['Is_Display_Row']);
+            $displayTaskRows[] = $taskRow;
+        }
+    }
+
+    if (is_array($globalTotalRow)) {
+        unset($globalTotalRow['Is_Display_Row']);
+    }
+
     $modal['budget_cost_total'] = $budgetTotal;
-    $modal['task_rows'] = array_values($taskRowsByKey);
+    $modal['task_rows'] = $displayTaskRows;
     $modal['task_rows_total'] = [
         'Cost_Group_Code' => 'TOTAL',
         'Cost_Group_Description' => 'Totaal alle regels',
@@ -760,6 +811,7 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
         'Variance_Budget_EAC' => finance_calculate_result($budgetTotal, $eacTotal),
         'Is_Total_Row' => true,
     ];
+    $modal['task_rows_global_total'] = is_array($globalTotalRow) ? $globalTotalRow : $modal['task_rows_total'];
 
     return $modal;
 }

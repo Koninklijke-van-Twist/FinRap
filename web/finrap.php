@@ -44,6 +44,104 @@ function finrap_format_currency(float $value): string
     return '€ ' . number_format($value, 2, ',', '.');
 }
 
+function finrap_tooltip_reference_html(string $tableName, string $fieldName): string
+{
+    return '<span class="value-tooltip-table">[' . htmlspecialchars($tableName) . ']</span>'
+        . '<span class="value-tooltip-op"> -> </span>'
+        . '<span class="value-tooltip-field">' . htmlspecialchars($fieldName) . '</span>';
+}
+
+function finrap_highlight_tooltip_operators_html(string $text): string
+{
+    $escaped = htmlspecialchars($text);
+    return preg_replace('/([+\-\/])/', '<span class="value-tooltip-operator">$1</span>', $escaped) ?? $escaped;
+}
+
+function finrap_tooltip_formula_html(array $parts): string
+{
+    $html = '';
+    foreach ($parts as $part) {
+        if (!is_array($part)) {
+            continue;
+        }
+
+        $type = (string) ($part['type'] ?? '');
+        if ($type === 'ref') {
+            $html .= finrap_tooltip_reference_html((string) ($part['table'] ?? ''), (string) ($part['field'] ?? ''));
+            continue;
+        }
+
+        if ($type === 'text') {
+            $html .= '<span class="value-tooltip-op">' . finrap_highlight_tooltip_operators_html((string) ($part['text'] ?? '')) . '</span>';
+        }
+    }
+
+    return $html;
+}
+
+function finrap_render_value_with_tooltip_html(string $displayHtml, string $tooltipHtml, string $extraClass = ''): string
+{
+    $className = trim('has-value-tooltip ' . $extraClass);
+    return '<span class="' . htmlspecialchars($className) . '">'
+        . $displayHtml
+        . '<span class="value-tooltip-rich">' . $tooltipHtml . '</span>'
+        . '</span>';
+}
+
+function finrap_cost_group_value_tooltip_html(string $columnKey): string
+{
+    if ($columnKey === 'Cost_Group_Code') {
+        return finrap_tooltip_formula_html([
+            ['type' => 'ref', 'table' => 'ProjectenJobTaskLines', 'field' => 'Job_Task_No'],
+        ]);
+    }
+
+    if ($columnKey === 'Cost_Group_Description') {
+        return finrap_tooltip_formula_html([
+            ['type' => 'ref', 'table' => 'ProjectenJobTaskLines', 'field' => 'Description'],
+        ]);
+    }
+
+    if ($columnKey === 'Budget_Cost') {
+        return finrap_tooltip_formula_html([
+            ['type' => 'ref', 'table' => 'ProjectenJobTaskLines', 'field' => 'Schedule_Total_Cost'],
+        ]);
+    }
+
+    if ($columnKey === 'EAC') {
+        return finrap_tooltip_formula_html([
+            ['type' => 'ref', 'table' => 'ProjectenJobTaskLines', 'field' => 'EAC_Total_Cost'],
+            ['type' => 'text', 'text' => ' (fallback: '],
+            ['type' => 'ref', 'table' => 'ProjectenJobTaskLines', 'field' => 'Schedule_Total_Cost'],
+            ['type' => 'text', 'text' => ')'],
+        ]);
+    }
+
+    if ($columnKey === 'Booked_Cost') {
+        return finrap_tooltip_formula_html([
+            ['type' => 'ref', 'table' => 'JobLedgerEntries', 'field' => 'Total_Cost_LCY'],
+        ]);
+    }
+
+    if ($columnKey === 'Entered_Obligations') {
+        return finrap_tooltip_formula_html([
+            ['type' => 'ref', 'table' => 'PurchaseLines', 'field' => 'Line_Amount'],
+        ]);
+    }
+
+    if ($columnKey === 'Variance_Budget_EAC') {
+        return finrap_tooltip_formula_html([
+            ['type' => 'ref', 'table' => 'ProjectenJobTaskLines', 'field' => 'Schedule_Total_Cost'],
+            ['type' => 'text', 'text' => ' - '],
+            ['type' => 'ref', 'table' => 'ProjectenJobTaskLines', 'field' => 'EAC_Total_Cost'],
+        ]);
+    }
+
+    return finrap_tooltip_formula_html([
+        ['type' => 'text', 'text' => 'Geen broninformatie beschikbaar'],
+    ]);
+}
+
 function finrap_currency_sign_class(float $value): string
 {
     $epsilon = 0.000001;
@@ -198,24 +296,31 @@ function finrap_render_cost_group_table(array $taskRows, bool $totalsOnly = fals
 
             if ($columnKey === 'Cost_Group_Code') {
                 $cellClass = $isRight ? ' class="is-right"' : '';
-                echo '<td' . $cellClass . '>' . htmlspecialchars($taskCode) . '</td>';
+                $display = htmlspecialchars($taskCode);
+                $tooltipHtml = finrap_cost_group_value_tooltip_html($columnKey);
+                echo '<td' . $cellClass . '>' . finrap_render_value_with_tooltip_html($display, $tooltipHtml) . '</td>';
                 continue;
             }
 
             if ($columnKey === 'Cost_Group_Description') {
-                echo '<td class="is-description">' . htmlspecialchars($descriptionValue) . '</td>';
+                $display = htmlspecialchars($descriptionValue);
+                $tooltipHtml = finrap_cost_group_value_tooltip_html($columnKey);
+                echo '<td class="is-description">' . finrap_render_value_with_tooltip_html($display, $tooltipHtml) . '</td>';
                 continue;
             }
 
             $value = finance_to_float($row[$columnKey] ?? 0.0);
+            $tooltipHtml = finrap_cost_group_value_tooltip_html($columnKey);
             if ($columnKey === 'Variance_Budget_EAC') {
                 $cellClass = 'is-right ' . finrap_currency_sign_class($value);
-                echo '<td class="' . htmlspecialchars($cellClass) . '">' . htmlspecialchars(finrap_format_currency($value)) . '</td>';
+                $display = htmlspecialchars(finrap_format_currency($value));
+                echo '<td class="' . htmlspecialchars($cellClass) . '">' . finrap_render_value_with_tooltip_html($display, $tooltipHtml) . '</td>';
                 continue;
             }
 
             $cellClass = trim('is-right ' . finrap_currency_sign_class($value));
-            echo '<td class="' . htmlspecialchars($cellClass) . '">' . htmlspecialchars(finrap_format_currency($value)) . '</td>';
+            $display = htmlspecialchars(finrap_format_currency($value));
+            echo '<td class="' . htmlspecialchars($cellClass) . '">' . finrap_render_value_with_tooltip_html($display, $tooltipHtml) . '</td>';
         }
         echo '</tr>';
     }
@@ -279,9 +384,10 @@ $hoursBooked = (float) ($modal['hours_booked'] ?? 0.0);
 $hoursToGo = $hoursEstimated - $hoursBooked;
 
 $taskRowsTotal = is_array($modal['task_rows_total'] ?? null) ? $modal['task_rows_total'] : [];
-$bookedCostTotal = (float) ($taskRowsTotal['Booked_Cost'] ?? 0.0);
-$eacTotal = (float) ($taskRowsTotal['EAC'] ?? 0.0);
-$budgetCostTotal = (float) ($taskRowsTotal['Budget_Cost'] ?? 0.0);
+$globalTotalRow = is_array($modal['task_rows_global_total'] ?? null) ? $modal['task_rows_global_total'] : $taskRowsTotal;
+$bookedCostTotal = (float) ($globalTotalRow['Booked_Cost'] ?? 0.0);
+$eacTotal = (float) ($globalTotalRow['EAC'] ?? 0.0);
+$budgetCostTotal = (float) ($globalTotalRow['Budget_Cost'] ?? 0.0);
 
 $finrapEpsilon = 0.000001;
 $grossProfitPct = abs($contractValue) > $finrapEpsilon ? ($grossProfit / $contractValue * 100.0) : 0.0;
@@ -296,6 +402,141 @@ $pocCalcDenominator = abs($eacTotal) > $finrapEpsilon ? $eacTotal : $budgetCostT
 $pocCalcPercent = abs($pocCalcDenominator) > $finrapEpsilon
     ? ($bookedCostTotal / $pocCalcDenominator * 100.0)
     : 0.0;
+
+$estimatedHoursTable = FINRAP_ESTIMATED_HOURS_ENTITY_SET !== '' ? FINRAP_ESTIMATED_HOURS_ENTITY_SET : FINRAP_BUDGET_HOURS_ENTITY_SET;
+$estimatedHoursField = FINRAP_ESTIMATED_HOURS_FIELD !== '' ? FINRAP_ESTIMATED_HOURS_FIELD : FINRAP_BUDGET_HOURS_FIELD;
+
+$tooltipBudgetHours = finrap_tooltip_formula_html([
+    ['type' => 'ref', 'table' => FINRAP_BUDGET_HOURS_ENTITY_SET, 'field' => FINRAP_BUDGET_HOURS_FIELD],
+]);
+$tooltipEstimatedHours = finrap_tooltip_formula_html([
+    ['type' => 'ref', 'table' => $estimatedHoursTable, 'field' => $estimatedHoursField],
+]);
+$tooltipBookedHours = finrap_tooltip_formula_html([
+    ['type' => 'ref', 'table' => 'Job_Task_Lines', 'field' => 'LVS_Used_Hours_Quantity'],
+]);
+$tooltipHoursToGo = finrap_tooltip_formula_html([
+    ['type' => 'ref', 'table' => $estimatedHoursTable, 'field' => $estimatedHoursField],
+    ['type' => 'text', 'text' => ' - '],
+    ['type' => 'ref', 'table' => 'Job_Task_Lines', 'field' => 'LVS_Used_Hours_Quantity'],
+]);
+$tooltipGrossProfitPct = finrap_tooltip_formula_html([
+    ['type' => 'text', 'text' => '('],
+    ['type' => 'ref', 'table' => 'FactureerbareProjectPlanningsRegels', 'field' => 'Line_Amount_LCY'],
+    ['type' => 'text', 'text' => ' - '],
+    ['type' => 'ref', 'table' => 'ProjectFinanceForecast', 'field' => 'expected_costs'],
+    ['type' => 'text', 'text' => ') / '],
+    ['type' => 'ref', 'table' => 'FactureerbareProjectPlanningsRegels', 'field' => 'Line_Amount_LCY'],
+]);
+$tooltipOrderResultPct = finrap_tooltip_formula_html([
+    ['type' => 'text', 'text' => '(GrossProfit - Variance) / '],
+    ['type' => 'ref', 'table' => 'FactureerbareProjectPlanningsRegels', 'field' => 'Line_Amount_LCY'],
+]);
+$tooltipVariancePct = finrap_tooltip_formula_html([
+    ['type' => 'ref', 'table' => 'ProjectenJobTaskLines', 'field' => 'Schedule_Total_Cost'],
+    ['type' => 'text', 'text' => ' / '],
+    ['type' => 'ref', 'table' => 'FactureerbareProjectPlanningsRegels', 'field' => 'Line_Amount_LCY'],
+]);
+$tooltipExpVariance = finrap_tooltip_formula_html([
+    ['type' => 'ref', 'table' => 'ProjectenJobTaskLines', 'field' => 'Schedule_Total_Cost'],
+    ['type' => 'text', 'text' => ' - '],
+    ['type' => 'ref', 'table' => 'ProjectFinanceForecast', 'field' => 'expected_costs'],
+]);
+$tooltipExpOrderResult = finrap_tooltip_formula_html([
+    ['type' => 'ref', 'table' => 'FactureerbareProjectPlanningsRegels', 'field' => 'Line_Amount_LCY'],
+    ['type' => 'text', 'text' => ' - '],
+    ['type' => 'ref', 'table' => 'ProjectFinanceForecast', 'field' => 'expected_costs'],
+]);
+$tooltipIprResult = finrap_tooltip_formula_html([
+    ['type' => 'ref', 'table' => 'JobLedgerEntries', 'field' => 'Total_Cost_LCY'],
+    ['type' => 'text', 'text' => ' - '],
+    ['type' => 'ref', 'table' => 'ProjectFinanceTotals', 'field' => 'total_revenue'],
+]);
+$tooltipPoc = finrap_tooltip_formula_html([
+    ['type' => 'ref', 'table' => 'Projecten', 'field' => 'Percent_Completed'],
+]);
+$tooltipPocCalc = finrap_tooltip_formula_html([
+    ['type' => 'ref', 'table' => 'JobLedgerEntries', 'field' => 'Total_Cost_LCY'],
+    ['type' => 'text', 'text' => ' / '],
+    ['type' => 'ref', 'table' => 'ProjectenJobTaskLines', 'field' => 'EAC_Total_Cost'],
+    ['type' => 'text', 'text' => ' (fallback: '],
+    ['type' => 'ref', 'table' => 'ProjectenJobTaskLines', 'field' => 'Schedule_Total_Cost'],
+    ['type' => 'text', 'text' => ')'],
+]);
+$tooltipProjectNo = finrap_tooltip_formula_html([
+    ['type' => 'ref', 'table' => 'Projecten', 'field' => 'No'],
+]);
+$tooltipOrderReference = finrap_tooltip_formula_html([
+    ['type' => 'ref', 'table' => 'Projecten', 'field' => 'Your_Reference'],
+    ['type' => 'text', 'text' => ' / '],
+    ['type' => 'ref', 'table' => 'Projecten', 'field' => 'LVS_Your_reference'],
+]);
+$tooltipDescription = finrap_tooltip_formula_html([
+    ['type' => 'ref', 'table' => 'Projecten', 'field' => 'Description'],
+]);
+$tooltipCreatedAt = finrap_tooltip_formula_html([
+    ['type' => 'ref', 'table' => 'FinRap_Report', 'field' => 'fetched_at'],
+]);
+$tooltipCustomer = finrap_tooltip_formula_html([
+    ['type' => 'ref', 'table' => 'Projecten', 'field' => 'Bill_to_Customer_No'],
+    ['type' => 'text', 'text' => ' + '],
+    ['type' => 'ref', 'table' => 'Projecten', 'field' => 'Bill_to_Name'],
+    ['type' => 'text', 'text' => ' (fallback: '],
+    ['type' => 'ref', 'table' => 'Projecten', 'field' => 'Sell_to_Customer_No'],
+    ['type' => 'text', 'text' => ' + '],
+    ['type' => 'ref', 'table' => 'Projecten', 'field' => 'Sell_to_Customer_Name'],
+    ['type' => 'text', 'text' => ')'],
+]);
+$tooltipProjectManager = finrap_tooltip_formula_html([
+    ['type' => 'ref', 'table' => 'Projecten', 'field' => 'Project_Manager'],
+    ['type' => 'text', 'text' => ' (fallback: '],
+    ['type' => 'ref', 'table' => 'Projecten', 'field' => 'Person_Responsible'],
+    ['type' => 'text', 'text' => ')'],
+]);
+$tooltipOrderDate = finrap_tooltip_formula_html([
+    ['type' => 'ref', 'table' => 'Projecten', 'field' => 'Creation_Date'],
+]);
+$tooltipCompletedDate = finrap_tooltip_formula_html([
+    ['type' => 'ref', 'table' => 'Projecten', 'field' => 'Ending_Date'],
+]);
+$tooltipSalesManager = finrap_tooltip_formula_html([
+    ['type' => 'ref', 'table' => 'Projecten', 'field' => 'KVT_Sales_Person_Code'],
+]);
+$tooltipContractValue = finrap_tooltip_formula_html([
+    ['type' => 'ref', 'table' => 'FactureerbareProjectPlanningsRegels', 'field' => 'Line_Amount_LCY'],
+]);
+$tooltipTotalDirectCost = finrap_tooltip_formula_html([
+    ['type' => 'ref', 'table' => 'ProjectFinanceForecast', 'field' => 'expected_costs'],
+]);
+$tooltipGrossProfit = finrap_tooltip_formula_html([
+    ['type' => 'ref', 'table' => 'FactureerbareProjectPlanningsRegels', 'field' => 'Line_Amount_LCY'],
+    ['type' => 'text', 'text' => ' - '],
+    ['type' => 'ref', 'table' => 'ProjectFinanceForecast', 'field' => 'expected_costs'],
+]);
+$tooltipVarianceValue = finrap_tooltip_formula_html([
+    ['type' => 'ref', 'table' => 'ProjectenJobTaskLines', 'field' => 'Schedule_Total_Cost'],
+]);
+$tooltipOrderResult = finrap_tooltip_formula_html([
+    ['type' => 'text', 'text' => '(Contract Value - Total Direct Cost) - Variance'],
+]);
+$tooltipInstallmentsInvoiced = finrap_tooltip_formula_html([
+    ['type' => 'ref', 'table' => 'ProjectFinanceTotals', 'field' => 'total_revenue'],
+]);
+$tooltipInstallmentsReceived = finrap_tooltip_formula_html([
+    ['type' => 'ref', 'table' => 'Customer_Ledger_Entries', 'field' => 'Amount_LCY'],
+]);
+$tooltipTermijnNo = finrap_tooltip_formula_html([
+    ['type' => 'ref', 'table' => 'FactureerbareProjectPlanningsRegels', 'field' => 'Line_No'],
+]);
+$tooltipTermijnDate = finrap_tooltip_formula_html([
+    ['type' => 'ref', 'table' => 'FactureerbareProjectPlanningsRegels', 'field' => 'Planning_Date'],
+]);
+$tooltipTermijnStatus = finrap_tooltip_formula_html([
+    ['type' => 'ref', 'table' => 'FactureerbareProjectPlanningsRegels', 'field' => 'LVS_Document_Status'],
+]);
+$tooltipTermijnAmount = finrap_tooltip_formula_html([
+    ['type' => 'ref', 'table' => 'FactureerbareProjectPlanningsRegels', 'field' => 'Line_Amount_LCY'],
+]);
 
 $termijnLines = is_array($modal['termijn_lines'] ?? null) ? $modal['termijn_lines'] : [];
 ?>
@@ -648,6 +889,72 @@ $termijnLines = is_array($modal['termijn_lines'] ?? null) ? $modal['termijn_line
             opacity: 1;
         }
 
+        .has-value-tooltip {
+            position: relative;
+            cursor: help;
+            border-bottom: 1px dotted currentColor;
+        }
+
+        .value-tooltip-rich {
+            position: absolute;
+            bottom: calc(100% + 10px);
+            right: 0;
+            z-index: 10010;
+            background: #1f2937;
+            color: #ffffff;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 500;
+            white-space: normal;
+            min-width: 220px;
+            max-width: 360px;
+            text-align: left;
+            letter-spacing: normal;
+            line-height: 1.4;
+            pointer-events: none;
+            opacity: 0;
+            transform: translateY(4px);
+            transition: opacity 0.2s ease, transform 0.2s ease;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+        }
+
+        .value-tooltip-rich::before {
+            content: '';
+            position: absolute;
+            top: 100%;
+            right: 14px;
+            width: 0;
+            height: 0;
+            border-left: 6px solid transparent;
+            border-right: 6px solid transparent;
+            border-top: 6px solid #1f2937;
+        }
+
+        .has-value-tooltip:hover .value-tooltip-rich {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .value-tooltip-table {
+            color: #22c55e;
+            font-weight: 700;
+        }
+
+        .value-tooltip-field {
+            color: #f59e0b;
+            font-weight: 700;
+        }
+
+        .value-tooltip-op {
+            color: #d1d5db;
+        }
+
+        .value-tooltip-operator {
+            color: #ff2b2b;
+            font-weight: 800;
+        }
+
         .error-box {
             border: 1px solid #fecaca;
             background: #fef2f2;
@@ -707,6 +1014,7 @@ $termijnLines = is_array($modal['termijn_lines'] ?? null) ? $modal['termijn_line
         }
 
         @media print {
+
             html,
             body {
                 background: #ffffff;
@@ -927,6 +1235,7 @@ $termijnLines = is_array($modal['termijn_lines'] ?? null) ? $modal['termijn_line
                 page-break-inside: avoid;
             }
         }
+
         .analytics-blocks-section {
             display: grid;
             grid-template-columns: 1fr 1fr 1fr;
@@ -1056,7 +1365,6 @@ $termijnLines = is_array($modal['termijn_lines'] ?? null) ? $modal['termijn_line
                 padding-right: 16px;
             }
         }
-
     </style>
 </head>
 
@@ -1075,21 +1383,21 @@ $termijnLines = is_array($modal['termijn_lines'] ?? null) ? $modal['termijn_line
                         <div class="project-modal-column">
                             <div class="project-field">
                                 <div class="project-field-label">Ordernumber</div>
-                                <div class="project-field-value"><?= htmlspecialchars($reportProjectNo) ?></div>
+                                <div class="project-field-value"><?= finrap_render_value_with_tooltip_html(htmlspecialchars($reportProjectNo), $tooltipProjectNo) ?></div>
                             </div>
                             <div class="project-field">
                                 <div class="project-field-label">OrderReference</div>
-                                <div class="project-field-value"><?= htmlspecialchars($orderReference) ?></div>
+                                <div class="project-field-value"><?= finrap_render_value_with_tooltip_html(htmlspecialchars($orderReference), $tooltipOrderReference) ?></div>
                             </div>
                         </div>
                         <div class="project-modal-column">
                             <div class="project-field">
                                 <div class="project-field-label">Description</div>
-                                <div class="project-field-value"><?= htmlspecialchars($description) ?></div>
+                                <div class="project-field-value"><?= finrap_render_value_with_tooltip_html(htmlspecialchars($description), $tooltipDescription) ?></div>
                             </div>
                             <div class="project-field">
                                 <div class="project-field-label">Rapport gemaakt op</div>
-                                <div class="project-field-value"><?= htmlspecialchars($createdAtFormatted) ?></div>
+                                <div class="project-field-value"><?= finrap_render_value_with_tooltip_html(htmlspecialchars($createdAtFormatted), $tooltipCreatedAt) ?></div>
                             </div>
                         </div>
                     </section>
@@ -1098,12 +1406,12 @@ $termijnLines = is_array($modal['termijn_lines'] ?? null) ? $modal['termijn_line
                         <div class="project-modal-column">
                             <div class="project-field">
                                 <div class="project-field-label">Customer</div>
-                                <div class="project-field-value"><?= htmlspecialchars($customer) ?></div>
+                                <div class="project-field-value"><?= finrap_render_value_with_tooltip_html(htmlspecialchars($customer), $tooltipCustomer) ?></div>
                             </div>
                             <div class="project-field">
                                 <div class="project-field-label">Project manager</div>
                                 <div class="project-field-value">
-                                    <?= str_replace("KVT\\", "", htmlspecialchars($projectManager)) ?>
+                                    <?= finrap_render_value_with_tooltip_html(str_replace("KVT\\", "", htmlspecialchars($projectManager)), $tooltipProjectManager) ?>
                                 </div>
                             </div>
                             <div class="project-field">
@@ -1115,19 +1423,19 @@ $termijnLines = is_array($modal['termijn_lines'] ?? null) ? $modal['termijn_line
                             <div class="project-field">
                                 <div class="project-field-label">Order Date</div>
                                 <div class="project-field-value">
-                                    <?= htmlspecialchars((string) ($project['Creation_Date'] ?? '')) ?>
+                                    <?= finrap_render_value_with_tooltip_html(htmlspecialchars((string) ($project['Creation_Date'] ?? '')), $tooltipOrderDate) ?>
                                 </div>
                             </div>
                             <div class="project-field">
                                 <div class="project-field-label">Completed date</div>
                                 <div class="project-field-value">
-                                    <?= htmlspecialchars((string) ($project['Ending_Date'] ?? '')) ?>
+                                    <?= finrap_render_value_with_tooltip_html(htmlspecialchars((string) ($project['Ending_Date'] ?? '')), $tooltipCompletedDate) ?>
                                 </div>
                             </div>
                             <div class="project-field">
                                 <div class="project-field-label">Sales Manager</div>
                                 <div class="project-field-value">
-                                    <?= htmlspecialchars((string) ($project['KVT_Sales_Person_Code'] ?? '')) ?>
+                                    <?= finrap_render_value_with_tooltip_html(htmlspecialchars((string) ($project['KVT_Sales_Person_Code'] ?? '')), $tooltipSalesManager) ?>
                                 </div>
                             </div>
                         </div>
@@ -1138,36 +1446,42 @@ $termijnLines = is_array($modal['termijn_lines'] ?? null) ? $modal['termijn_line
                             <thead>
                                 <tr>
                                     <th class="is-right" data-tooltip="Totale contractwaarde met klant">Contract Value</th>
-                                    <th class="is-right" data-tooltip="Totale verwachte directe kosten">Total Direct Cost</th>
-                                    <th class="is-right" data-tooltip="Contractwaarde minus directe kosten">Gross Profit</th>
-                                    <th class="is-right" data-tooltip="Verschil tussen begrote en verwachte kosten">Variance Budget - EAC</th>
-                                    <th class="is-right" data-tooltip="Netto winst na alle kosten en verwachtingen">Order Result</th>
-                                    <th class="is-right" data-tooltip="Totaal gefactureerde bedrag tot nu toe">Installments Invoiced</th>
-                                    <th class="is-right" data-tooltip="Totaal ontvangen betalingen tot nu toe">Installments Received</th>
+                                    <th class="is-right" data-tooltip="Totale verwachte directe kosten">Total Direct Cost
+                                    </th>
+                                    <th class="is-right" data-tooltip="Contractwaarde minus directe kosten">Gross Profit
+                                    </th>
+                                    <th class="is-right" data-tooltip="Verschil tussen begrote en verwachte kosten">Variance
+                                        Budget - EAC</th>
+                                    <th class="is-right" data-tooltip="Netto winst na alle kosten en verwachtingen">Order
+                                        Result</th>
+                                    <th class="is-right" data-tooltip="Totaal gefactureerde bedrag tot nu toe">Installments
+                                        Invoiced</th>
+                                    <th class="is-right" data-tooltip="Totaal ontvangen betalingen tot nu toe">Installments
+                                        Received</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 <tr>
                                     <td class="is-right <?= finrap_currency_sign_class($contractValue) ?>">
-                                        <?= htmlspecialchars(finrap_format_currency($contractValue)) ?>
+                                        <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($contractValue)), $tooltipContractValue) ?>
                                     </td>
                                     <td class="is-right <?= finrap_currency_sign_class($totalDirectCost) ?>">
-                                        <?= htmlspecialchars(finrap_format_currency($totalDirectCost)) ?>
+                                        <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($totalDirectCost)), $tooltipTotalDirectCost) ?>
                                     </td>
                                     <td class="is-right <?= finrap_currency_sign_class($grossProfit) ?>">
-                                        <?= htmlspecialchars(finrap_format_currency($grossProfit)) ?>
+                                        <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($grossProfit)), $tooltipGrossProfit) ?>
                                     </td>
                                     <td class="is-right <?= finrap_currency_sign_class($variance) ?>">
-                                        <?= htmlspecialchars(finrap_format_currency($variance)) ?>
+                                        <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($variance)), $tooltipVarianceValue) ?>
                                     </td>
                                     <td class="is-right <?= finrap_currency_sign_class($orderResult) ?>">
-                                        <?= htmlspecialchars(finrap_format_currency($orderResult)) ?>
+                                        <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($orderResult)), $tooltipOrderResult) ?>
                                     </td>
                                     <td class="is-right <?= finrap_currency_sign_class($installmentsInvoiced) ?>">
-                                        <?= htmlspecialchars(finrap_format_currency($installmentsInvoiced)) ?>
+                                        <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($installmentsInvoiced)), $tooltipInstallmentsInvoiced) ?>
                                     </td>
                                     <td class="is-right <?= finrap_currency_sign_class($installmentsReceived) ?>">
-                                        <?= htmlspecialchars(finrap_format_currency($installmentsReceived)) ?>
+                                        <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($installmentsReceived)), $tooltipInstallmentsReceived) ?>
                                     </td>
                                 </tr>
                             </tbody>
@@ -1184,32 +1498,48 @@ $termijnLines = is_array($modal['termijn_lines'] ?? null) ? $modal['termijn_line
                             <div class="analytics-block-header">Uren &amp; marges</div>
                             <div class="analytics-block-body">
                                 <div class="analytics-row">
-                                    <span class="analytics-label" data-tooltip="Gepland aantal uren voor het project">Budget Hours</span>
-                                    <span class="analytics-value"><?= htmlspecialchars(finrap_format_hours($hoursBudget)) ?></span>
+                                    <span class="analytics-label" data-tooltip="Gepland aantal uren voor het project">Budget
+                                        Hours</span>
+                                    <span
+                                        class="analytics-value has-value-tooltip"><?= htmlspecialchars(finrap_format_hours($hoursBudget)) ?><span class="value-tooltip-rich"><?= $tooltipBudgetHours ?></span></span>
                                 </div>
                                 <div class="analytics-row">
-                                    <span class="analytics-label" data-tooltip="Verwacht aantal uren op basis van huidige prognose">Estimated Hours</span>
-                                    <span class="analytics-value"><?= htmlspecialchars(finrap_format_hours($hoursEstimated)) ?></span>
+                                    <span class="analytics-label"
+                                        data-tooltip="Verwacht aantal uren op basis van huidige prognose">Estimated
+                                        Hours</span>
+                                    <span
+                                        class="analytics-value has-value-tooltip"><?= htmlspecialchars(finrap_format_hours($hoursEstimated)) ?><span class="value-tooltip-rich"><?= $tooltipEstimatedHours ?></span></span>
                                 </div>
                                 <div class="analytics-row">
-                                    <span class="analytics-label" data-tooltip="Werkelijk geboekt aantal uren tot nu toe">Booked Hours</span>
-                                    <span class="analytics-value"><?= htmlspecialchars(finrap_format_hours($hoursBooked)) ?></span>
+                                    <span class="analytics-label"
+                                        data-tooltip="Werkelijk geboekt aantal uren tot nu toe">Booked Hours</span>
+                                    <span
+                                        class="analytics-value has-value-tooltip"><?= htmlspecialchars(finrap_format_hours($hoursBooked)) ?><span class="value-tooltip-rich"><?= $tooltipBookedHours ?></span></span>
                                 </div>
                                 <div class="analytics-row">
-                                    <span class="analytics-label" data-tooltip="Resterende uren: Geschat - Geboekt">Hours to go</span>
-                                    <span class="analytics-value <?= finrap_currency_sign_class($hoursToGo) ?>"><?= htmlspecialchars(finrap_format_hours($hoursToGo)) ?></span>
+                                    <span class="analytics-label" data-tooltip="Resterende uren: Geschat - Geboekt">Hours to
+                                        go</span>
+                                    <span
+                                        class="analytics-value <?= finrap_currency_sign_class($hoursToGo) ?> has-value-tooltip"><?= htmlspecialchars(finrap_format_hours($hoursToGo)) ?><span class="value-tooltip-rich"><?= $tooltipHoursToGo ?></span></span>
                                 </div>
                                 <div class="analytics-row">
-                                    <span class="analytics-label" data-tooltip="Bruto winst in procenten van contractwaarde">Gross profit %</span>
-                                    <span class="analytics-value <?= finrap_currency_sign_class($grossProfitPct) ?>"><?= htmlspecialchars(finrap_format_percent($grossProfitPct)) ?></span>
+                                    <span class="analytics-label"
+                                        data-tooltip="Bruto winst in procenten van contractwaarde">Gross profit %</span>
+                                    <span
+                                        class="analytics-value <?= finrap_currency_sign_class($grossProfitPct) ?> has-value-tooltip"><?= htmlspecialchars(finrap_format_percent($grossProfitPct)) ?><span class="value-tooltip-rich"><?= $tooltipGrossProfitPct ?></span></span>
                                 </div>
                                 <div class="analytics-row">
-                                    <span class="analytics-label" data-tooltip="Netto winst in procenten van contractwaarde">Order result %</span>
-                                    <span class="analytics-value <?= finrap_currency_sign_class($orderResultPct) ?>"><?= htmlspecialchars(finrap_format_percent($orderResultPct)) ?></span>
+                                    <span class="analytics-label"
+                                        data-tooltip="Netto winst in procenten van contractwaarde">Order result %</span>
+                                    <span
+                                        class="analytics-value <?= finrap_currency_sign_class($orderResultPct) ?> has-value-tooltip"><?= htmlspecialchars(finrap_format_percent($orderResultPct)) ?><span class="value-tooltip-rich"><?= $tooltipOrderResultPct ?></span></span>
                                 </div>
                                 <div class="analytics-row">
-                                    <span class="analytics-label" data-tooltip="Verschil tussen budget en EAC in procenten van contractwaarde">Variance budget - EAC %</span>
-                                    <span class="analytics-value <?= finrap_currency_sign_class($variancePct) ?>"><?= htmlspecialchars(finrap_format_percent($variancePct)) ?></span>
+                                    <span class="analytics-label"
+                                        data-tooltip="Verschil tussen budget en EAC in procenten van contractwaarde">Variance
+                                        budget - EAC %</span>
+                                    <span
+                                        class="analytics-value <?= finrap_currency_sign_class($variancePct) ?> has-value-tooltip"><?= htmlspecialchars(finrap_format_percent($variancePct)) ?><span class="value-tooltip-rich"><?= $tooltipVariancePct ?></span></span>
                                 </div>
                             </div>
                         </div>
@@ -1218,24 +1548,33 @@ $termijnLines = is_array($modal['termijn_lines'] ?? null) ? $modal['termijn_line
                             <div class="analytics-block-header">Verwachte uitkomsten</div>
                             <div class="analytics-block-body">
                                 <div class="analytics-row">
-                                    <span class="analytics-label" data-tooltip="Verwachte kosten minus begrote kosten">Exp. Variance Budget - EAC</span>
-                                    <span class="analytics-value <?= finrap_currency_sign_class($expVariance) ?>"><?= htmlspecialchars(finrap_format_currency($expVariance)) ?></span>
+                                    <span class="analytics-label" data-tooltip="Verwachte kosten minus begrote kosten">Exp.
+                                        Variance Budget - EAC</span>
+                                    <span
+                                        class="analytics-value <?= finrap_currency_sign_class($expVariance) ?> has-value-tooltip"><?= htmlspecialchars(finrap_format_currency($expVariance)) ?><span class="value-tooltip-rich"><?= $tooltipExpVariance ?></span></span>
                                 </div>
                                 <div class="analytics-row">
-                                    <span class="analytics-label" data-tooltip="Contractwaarde minus verwachte kosten">Expected Order Result</span>
-                                    <span class="analytics-value <?= finrap_currency_sign_class($expOrderResult) ?>"><?= htmlspecialchars(finrap_format_currency($expOrderResult)) ?></span>
+                                    <span class="analytics-label"
+                                        data-tooltip="Contractwaarde minus verwachte kosten">Expected Order Result</span>
+                                    <span
+                                        class="analytics-value <?= finrap_currency_sign_class($expOrderResult) ?> has-value-tooltip"><?= htmlspecialchars(finrap_format_currency($expOrderResult)) ?><span class="value-tooltip-rich"><?= $tooltipExpOrderResult ?></span></span>
                                 </div>
                                 <div class="analytics-row">
-                                    <span class="analytics-label" data-tooltip="Gerealiseerde winst uit WIP-berekening, oftewel wat er tot nu toe overblijft">IPR result</span>
-                                    <span class="analytics-value <?= finrap_currency_sign_class($iprResult) ?>"><?= htmlspecialchars(finrap_format_currency($iprResult)) ?></span>
+                                    <span class="analytics-label"
+                                        data-tooltip="Gerealiseerde winst uit WIP-berekening, oftewel wat er tot nu toe overblijft">IPR
+                                        result</span>
+                                    <span
+                                        class="analytics-value <?= finrap_currency_sign_class($iprResult) ?> has-value-tooltip"><?= htmlspecialchars(finrap_format_currency($iprResult)) ?><span class="value-tooltip-rich"><?= $tooltipIprResult ?></span></span>
                                 </div>
                                 <div class="analytics-row">
                                     <span class="analytics-label" data-tooltip="Voortgang in % van het project">POC</span>
-                                    <span class="analytics-value"><?= htmlspecialchars(finrap_format_percent($pocPercent)) ?></span>
+                                    <span class="analytics-value has-value-tooltip"><?= htmlspecialchars(finrap_format_percent($pocPercent)) ?><span class="value-tooltip-rich"><?= $tooltipPoc ?></span></span>
                                 </div>
                                 <div class="analytics-row">
-                                    <span class="analytics-label" data-tooltip="Booked Cost totaal gedeeld door EAC totaal, met Budget Cost totaal als fallback">POC Calc.</span>
-                                    <span class="analytics-value"><?= htmlspecialchars(finrap_format_percent($pocCalcPercent)) ?></span>
+                                    <span class="analytics-label"
+                                        data-tooltip="Booked Cost totaal gedeeld door EAC totaal, met Budget Cost totaal als fallback">POC
+                                        Calc.</span>
+                                    <span class="analytics-value has-value-tooltip"><?= htmlspecialchars(finrap_format_percent($pocCalcPercent)) ?><span class="value-tooltip-rich"><?= $tooltipPocCalc ?></span></span>
                                 </div>
                             </div>
                         </div>
@@ -1258,10 +1597,11 @@ $termijnLines = is_array($modal['termijn_lines'] ?? null) ? $modal['termijn_line
                                             );
                                             ?>
                                             <li class="termijn-item">
-                                                <span class="termijn-no">Termijn <?= $termijnNo ?></span>
-                                                <span class="termijn-meta"><?= htmlspecialchars($termijnDate) ?></span>
-                                                <span class="termijn-status"><?= htmlspecialchars($termijnStatus) ?></span>
-                                                <span class="termijn-amount"><?= htmlspecialchars(finrap_format_currency($termijnAmount)) ?></span>
+                                                <span class="termijn-no"><?= finrap_render_value_with_tooltip_html('Termijn ' . htmlspecialchars((string) $termijnNo), $tooltipTermijnNo) ?></span>
+                                                <span class="termijn-meta"><?= finrap_render_value_with_tooltip_html(htmlspecialchars($termijnDate), $tooltipTermijnDate) ?></span>
+                                                <span class="termijn-status"><?= finrap_render_value_with_tooltip_html(htmlspecialchars($termijnStatus), $tooltipTermijnStatus) ?></span>
+                                                <span
+                                                    class="termijn-amount"><?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($termijnAmount)), $tooltipTermijnAmount) ?></span>
                                             </li>
                                         <?php endforeach; ?>
                                     </ul>
