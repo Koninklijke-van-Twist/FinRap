@@ -11,6 +11,20 @@ require_once __DIR__ . '/auth_helper.php';
  * Constants
  */
 const FINRAP_FORMATTED_TASK_NOS_ONLY = true;
+const FINRAP_GLOBAL_TOTAL_TASK_NO = '000-000-000';
+
+const FINRAP_BUDGET_HOURS_ENTITY_SET = 'JobBaselineLines';
+const FINRAP_BUDGET_HOURS_FIELD = 'Quantity';
+const FINRAP_BUDGET_HOURS_FILTER_BASELINE_FIELD = 'Baseline_Version_in_Filter';
+const FINRAP_BUDGET_HOURS_FILTER_TYPE_FIELD = 'Type';
+const FINRAP_BUDGET_HOURS_FILTER_RESOURCE_TYPE_FIELD = 'Resource_Type';
+const FINRAP_BUDGET_HOURS_FILTER_UOM_FIELD = 'Unit_of_Measure_Code';
+const FINRAP_BUDGET_HOURS_FILTER_TYPE_VALUE = 'Resource';
+const FINRAP_BUDGET_HOURS_FILTER_RESOURCE_TYPE_VALUE = 'Person';
+const FINRAP_BUDGET_HOURS_FILTER_UOM_VALUE = 'HR';
+
+const FINRAP_ESTIMATED_HOURS_ENTITY_SET = '';
+const FINRAP_ESTIMATED_HOURS_FIELD = '';
 
 /**
  * Functies
@@ -303,6 +317,87 @@ function finrap_is_total_task_type(string $taskType): bool
     return str_contains(strtolower(trim($taskType)), 'totaal');
 }
 
+function finrap_fetch_budget_hours_total(
+    string $baseUrl,
+    string $environment,
+    string $company,
+    array $auth,
+    string $projectFilter,
+    int $ttl
+): ?float {
+    if (trim(FINRAP_BUDGET_HOURS_ENTITY_SET) === '' || trim(FINRAP_BUDGET_HOURS_FIELD) === '') {
+        return null;
+    }
+
+    $hoursFilter = $projectFilter
+        . " and Job_Task_No eq '" . FINRAP_GLOBAL_TOTAL_TASK_NO . "'"
+        . ' and ' . FINRAP_BUDGET_HOURS_FILTER_BASELINE_FIELD . ' eq true'
+        . " and " . FINRAP_BUDGET_HOURS_FILTER_TYPE_FIELD . " eq '" . str_replace("'", "''", FINRAP_BUDGET_HOURS_FILTER_TYPE_VALUE) . "'"
+        . " and " . FINRAP_BUDGET_HOURS_FILTER_RESOURCE_TYPE_FIELD . " eq '" . str_replace("'", "''", FINRAP_BUDGET_HOURS_FILTER_RESOURCE_TYPE_VALUE) . "'"
+        . " and " . FINRAP_BUDGET_HOURS_FILTER_UOM_FIELD . " eq '" . str_replace("'", "''", FINRAP_BUDGET_HOURS_FILTER_UOM_VALUE) . "'";
+
+    try {
+        $hoursUrl = finrap_company_entity_url_with_query($baseUrl, $environment, $company, FINRAP_BUDGET_HOURS_ENTITY_SET, [
+            '$select' => 'Job_Task_No,' . FINRAP_BUDGET_HOURS_FIELD,
+            '$filter' => $hoursFilter,
+        ]);
+        $hoursRows = odata_get_all($hoursUrl, $auth, $ttl);
+    } catch (Throwable $ignoredBudgetHoursLoadError) {
+        return null;
+    }
+
+    foreach ($hoursRows as $hoursRow) {
+        if (!is_array($hoursRow)) {
+            continue;
+        }
+
+        if (strcasecmp(trim((string) ($hoursRow['Job_Task_No'] ?? '')), FINRAP_GLOBAL_TOTAL_TASK_NO) !== 0) {
+            continue;
+        }
+
+        return finance_to_float($hoursRow[FINRAP_BUDGET_HOURS_FIELD] ?? 0.0);
+    }
+
+    return null;
+}
+
+function finrap_fetch_estimated_hours_total(
+    string $baseUrl,
+    string $environment,
+    string $company,
+    array $auth,
+    string $projectFilter,
+    int $ttl
+): ?float {
+    if (trim(FINRAP_ESTIMATED_HOURS_ENTITY_SET) === '' || trim(FINRAP_ESTIMATED_HOURS_FIELD) === '') {
+        return null;
+    }
+
+    try {
+        $hoursUrl = finrap_company_entity_url_with_query($baseUrl, $environment, $company, FINRAP_ESTIMATED_HOURS_ENTITY_SET, [
+            '$select' => 'Job_Task_No,' . FINRAP_ESTIMATED_HOURS_FIELD,
+            '$filter' => $projectFilter . " and Job_Task_No eq '" . FINRAP_GLOBAL_TOTAL_TASK_NO . "'",
+        ]);
+        $hoursRows = odata_get_all($hoursUrl, $auth, $ttl);
+    } catch (Throwable $ignoredEstimatedHoursLoadError) {
+        return null;
+    }
+
+    foreach ($hoursRows as $hoursRow) {
+        if (!is_array($hoursRow)) {
+            continue;
+        }
+
+        if (strcasecmp(trim((string) ($hoursRow['Job_Task_No'] ?? '')), FINRAP_GLOBAL_TOTAL_TASK_NO) !== 0) {
+            continue;
+        }
+
+        return finance_to_float($hoursRow[FINRAP_ESTIMATED_HOURS_FIELD] ?? 0.0);
+    }
+
+    return null;
+}
+
 function finrap_fetch_project(string $company, string $projectNo, int $ttl = 300): ?array
 {
     global $baseUrl;
@@ -535,39 +630,45 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
         $hoursRows = [];
     }
 
-    $hoursBudget = 0.0;
+    $hoursBudgetFallback = 0.0;
     $hoursBooked = 0.0;
-    $hoursEstimated = 0.0;
+    $hoursForecastFallback = 0.0;
     $hoursGlobalTotalRow = null;
+    $hasHourDetailRows = false;
     foreach ($hoursRows as $hoursRow) {
         if (!is_array($hoursRow)) {
             continue;
         }
 
-        if (strcasecmp(trim((string) ($hoursRow['Job_Task_No'] ?? '')), '000-000-000') === 0) {
+        if (strcasecmp(trim((string) ($hoursRow['Job_Task_No'] ?? '')), FINRAP_GLOBAL_TOTAL_TASK_NO) === 0) {
             $hoursGlobalTotalRow = $hoursRow;
-            break;
+            continue;
         }
+
+        if (finrap_is_total_task_type((string) ($hoursRow['Job_Task_Type'] ?? ''))) {
+            continue;
+        }
+
+        $hasHourDetailRows = true;
+        $hoursBudgetFallback = finance_add_amount($hoursBudgetFallback, finance_to_float($hoursRow['LVS_Budget_Hours_Quantity'] ?? 0.0));
+        $hoursBooked = finance_add_amount($hoursBooked, finance_to_float($hoursRow['LVS_Used_Hours_Quantity'] ?? 0.0));
+        $hoursForecastFallback = finance_add_amount($hoursForecastFallback, finance_to_float($hoursRow['LVS_Forecast_Hours_Quantity'] ?? 0.0));
     }
 
-    if ($hoursGlobalTotalRow !== null) {
-        $hoursBudget = finance_to_float($hoursGlobalTotalRow['LVS_Budget_Hours_Quantity'] ?? 0.0);
+    if (!$hasHourDetailRows && $hoursGlobalTotalRow !== null) {
+        $hoursBudgetFallback = finance_to_float($hoursGlobalTotalRow['LVS_Budget_Hours_Quantity'] ?? 0.0);
         $hoursBooked = finance_to_float($hoursGlobalTotalRow['LVS_Used_Hours_Quantity'] ?? 0.0);
-        $hoursEstimated = finance_to_float($hoursGlobalTotalRow['LVS_Forecast_Hours_Quantity'] ?? 0.0);
-    } else {
-        foreach ($hoursRows as $hoursRow) {
-            if (!is_array($hoursRow)) {
-                continue;
-            }
+        $hoursForecastFallback = finance_to_float($hoursGlobalTotalRow['LVS_Forecast_Hours_Quantity'] ?? 0.0);
+    }
 
-            if (finrap_is_total_task_type((string) ($hoursRow['Job_Task_Type'] ?? ''))) {
-                continue;
-            }
+    $hoursBudget = finrap_fetch_budget_hours_total($baseUrl, $environment, $company, $auth, $projectFilter, $ttl);
+    if ($hoursBudget === null) {
+        $hoursBudget = $hoursBudgetFallback;
+    }
 
-            $hoursBudget = finance_add_amount($hoursBudget, finance_to_float($hoursRow['LVS_Budget_Hours_Quantity'] ?? 0.0));
-            $hoursBooked = finance_add_amount($hoursBooked, finance_to_float($hoursRow['LVS_Used_Hours_Quantity'] ?? 0.0));
-            $hoursEstimated = finance_add_amount($hoursEstimated, finance_to_float($hoursRow['LVS_Forecast_Hours_Quantity'] ?? 0.0));
-        }
+    $hoursEstimated = finrap_fetch_estimated_hours_total($baseUrl, $environment, $company, $auth, $projectFilter, $ttl);
+    if ($hoursEstimated === null) {
+        $hoursEstimated = $hoursBudget;
     }
 
     $modal['hours_budget'] = $hoursBudget;

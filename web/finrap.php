@@ -278,6 +278,11 @@ $hoursEstimated = (float) ($modal['hours_estimated'] ?? 0.0);
 $hoursBooked = (float) ($modal['hours_booked'] ?? 0.0);
 $hoursToGo = $hoursEstimated - $hoursBooked;
 
+$taskRowsTotal = is_array($modal['task_rows_total'] ?? null) ? $modal['task_rows_total'] : [];
+$bookedCostTotal = (float) ($taskRowsTotal['Booked_Cost'] ?? 0.0);
+$eacTotal = (float) ($taskRowsTotal['EAC'] ?? 0.0);
+$budgetCostTotal = (float) ($taskRowsTotal['Budget_Cost'] ?? 0.0);
+
 $finrapEpsilon = 0.000001;
 $grossProfitPct = abs($contractValue) > $finrapEpsilon ? ($grossProfit / $contractValue * 100.0) : 0.0;
 $orderResultPct = abs($contractValue) > $finrapEpsilon ? ($orderResult / $contractValue * 100.0) : 0.0;
@@ -286,7 +291,11 @@ $variancePct = abs($contractValue) > $finrapEpsilon ? ($variance / $contractValu
 $expVariance = $variance - (float) ($summary['expected_costs'] ?? 0.0);
 $expOrderResult = $contractValue - (float) ($summary['expected_costs'] ?? 0.0);
 $pocPercent = (float) ($project['Percent_Completed'] ?? 0.0);
-$iprResult = (float) ($project['Recog_Profit_Amount'] ?? 0.0);
+$iprResult = $bookedCostTotal - $installmentsInvoiced;
+$pocCalcDenominator = abs($eacTotal) > $finrapEpsilon ? $eacTotal : $budgetCostTotal;
+$pocCalcPercent = abs($pocCalcDenominator) > $finrapEpsilon
+    ? ($bookedCostTotal / $pocCalcDenominator * 100.0)
+    : 0.0;
 
 $termijnLines = is_array($modal['termijn_lines'] ?? null) ? $modal['termijn_lines'] : [];
 ?>
@@ -1223,6 +1232,10 @@ $termijnLines = is_array($modal['termijn_lines'] ?? null) ? $modal['termijn_line
                                 <div class="analytics-row">
                                     <span class="analytics-label" data-tooltip="Voortgang in % van het project">POC</span>
                                     <span class="analytics-value"><?= htmlspecialchars(finrap_format_percent($pocPercent)) ?></span>
+                                </div>
+                                <div class="analytics-row">
+                                    <span class="analytics-label" data-tooltip="Booked Cost totaal gedeeld door EAC totaal, met Budget Cost totaal als fallback">POC Calc.</span>
+                                    <span class="analytics-value"><?= htmlspecialchars(finrap_format_percent($pocCalcPercent)) ?></span>
                                 </div>
                             </div>
                         </div>
