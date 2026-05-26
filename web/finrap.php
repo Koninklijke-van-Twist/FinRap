@@ -841,7 +841,6 @@ $termijnLines = is_array($modal['termijn_lines'] ?? null) ? $modal['termijn_line
         [data-tooltip] {
             position: relative;
             cursor: help;
-            border-bottom: 1px dotted currentColor;
         }
 
         [data-tooltip]::after {
@@ -892,7 +891,6 @@ $termijnLines = is_array($modal['termijn_lines'] ?? null) ? $modal['termijn_line
         .has-value-tooltip {
             position: relative;
             cursor: help;
-            border-bottom: 1px dotted currentColor;
         }
 
         .value-tooltip-rich {
