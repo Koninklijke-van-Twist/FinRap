@@ -8,6 +8,7 @@ error_reporting(E_ALL);
  */
 require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/logincheck.php';
+require_once __DIR__ . '/localization.php';
 require_once __DIR__ . '/finrap_data.php';
 
 /**
@@ -15,12 +16,12 @@ require_once __DIR__ . '/finrap_data.php';
  */
 function finrap_format_hours(float $value): string
 {
-    return number_format($value, 1, ',', '.') . ' u';
+    return __('format.hours', number_format($value, 1, ',', '.'));
 }
 
 function finrap_format_percent(float $value): string
 {
-    return number_format($value, 1, ',', '.') . '%';
+    return __('format.percent', number_format($value, 1, ',', '.'));
 }
 
 function finrap_format_date_nl(string $isoDate): string
@@ -111,9 +112,9 @@ function finrap_cost_group_value_tooltip_html(string $columnKey): string
     if ($columnKey === 'EAC') {
         return finrap_tooltip_formula_html([
             ['type' => 'ref', 'table' => 'ProjectenJobTaskLines', 'field' => 'EAC_Total_Cost'],
-            ['type' => 'text', 'text' => ' (fallback: '],
+            ['type' => 'text', 'text' => __('report.tooltip.fallback')],
             ['type' => 'ref', 'table' => 'ProjectenJobTaskLines', 'field' => 'Schedule_Total_Cost'],
-            ['type' => 'text', 'text' => ')'],
+            ['type' => 'text', 'text' => __('report.tooltip.fallback_close')],
         ]);
     }
 
@@ -138,7 +139,7 @@ function finrap_cost_group_value_tooltip_html(string $columnKey): string
     }
 
     return finrap_tooltip_formula_html([
-        ['type' => 'text', 'text' => 'Geen broninformatie beschikbaar'],
+        ['type' => 'text', 'text' => __('report.tooltip.no_source')],
     ]);
 }
 
@@ -154,27 +155,13 @@ function finrap_currency_sign_class(float $value): string
 
 function finrap_month_label(string $yearMonth): string
 {
-    static $months = [
-    '01' => 'Januari',
-    '02' => 'Februari',
-    '03' => 'Maart',
-    '04' => 'April',
-    '05' => 'Mei',
-    '06' => 'Juni',
-    '07' => 'Juli',
-    '08' => 'Augustus',
-    '09' => 'September',
-    '10' => 'Oktober',
-    '11' => 'November',
-    '12' => 'December',
-    ];
-
     if (!preg_match('/^\d{4}-\d{2}$/', $yearMonth)) {
         return $yearMonth;
     }
 
     [$year, $month] = explode('-', $yearMonth);
-    return ($months[$month] ?? $month) . ' ' . $year;
+    $monthKey = 'month.' . $month;
+    return __($monthKey) . ' ' . $year;
 }
 
 function finrap_format_report_datetime(string $rawDateTime): string
@@ -191,23 +178,8 @@ function finrap_format_report_datetime(string $rawDateTime): string
         return $value;
     }
 
-    $months = [
-        '01' => 'januari',
-        '02' => 'februari',
-        '03' => 'maart',
-        '04' => 'april',
-        '05' => 'mei',
-        '06' => 'juni',
-        '07' => 'juli',
-        '08' => 'augustus',
-        '09' => 'september',
-        '10' => 'oktober',
-        '11' => 'november',
-        '12' => 'december',
-    ];
-
     $monthNumber = $dt->format('m');
-    $monthLabel = $months[$monthNumber] ?? $monthNumber;
+    $monthLabel = __('month_lc.' . $monthNumber);
 
     return $dt->format('j') . ' ' . $monthLabel . ' ' . $dt->format('Y, H:i');
 }
@@ -215,13 +187,13 @@ function finrap_format_report_datetime(string $rawDateTime): string
 function finrap_cost_group_columns(): array
 {
     return [
-        ['key' => 'Cost_Group_Code', 'label' => 'Cost group code', 'is_right' => false, 'tooltip' => ''],
-        ['key' => 'Cost_Group_Description', 'label' => 'Cost Group Description', 'is_right' => false, 'tooltip' => ''],
-        ['key' => 'Budget_Cost', 'label' => 'Budget Cost', 'is_right' => true, 'tooltip' => 'Begrote kosten voor deze kostengroep'],
-        ['key' => 'EAC', 'label' => 'EAC', 'is_right' => true, 'tooltip' => 'Estimate At Completion: totale verwachte kosten aan einde project'],
-        ['key' => 'Booked_Cost', 'label' => 'Booked Cost', 'is_right' => true, 'tooltip' => 'Werkelijk geboekte kosten tot nu toe'],
-        ['key' => 'Entered_Obligations', 'label' => 'Entered Obligations', 'is_right' => true, 'tooltip' => 'Gereserveerde bedragen voor bestellingen/verplichtingen'],
-        ['key' => 'Variance_Budget_EAC', 'label' => 'Variance Budget - EAC', 'is_right' => true, 'tooltip' => 'Verschil tussen begroting en verwachte kosten'],
+        ['key' => 'Cost_Group_Code', 'label' => __('report.col.cost_group_code'), 'is_right' => false, 'tooltip' => ''],
+        ['key' => 'Cost_Group_Description', 'label' => __('report.col.cost_group_description'), 'is_right' => false, 'tooltip' => ''],
+        ['key' => 'Budget_Cost', 'label' => __('report.col.budget_cost'), 'is_right' => true, 'tooltip' => __('report.tooltip.col.budget_cost')],
+        ['key' => 'EAC', 'label' => __('report.col.eac'), 'is_right' => true, 'tooltip' => __('report.tooltip.col.eac')],
+        ['key' => 'Booked_Cost', 'label' => __('report.col.booked_cost'), 'is_right' => true, 'tooltip' => __('report.tooltip.col.booked_cost')],
+        ['key' => 'Entered_Obligations', 'label' => __('report.col.entered_obligations'), 'is_right' => true, 'tooltip' => __('report.tooltip.col.entered_obligations')],
+        ['key' => 'Variance_Budget_EAC', 'label' => __('report.col.variance_budget_eac'), 'is_right' => true, 'tooltip' => __('report.tooltip.col.variance_budget_eac')],
     ];
 }
 
@@ -342,7 +314,7 @@ $embedMode = (string) ($_GET['embed'] ?? '') === '1';
 $report = null;
 $error = null;
 if ($company === '' || $projectNo === '') {
-    $error = 'Ongeldige parameters. Open dit rapport via de startpagina.';
+    $error = __('report.error.invalid_params');
 } else {
     if ($reportId !== '') {
         $report = finrap_load_report_snapshot($company, $projectNo, $reportId);
@@ -352,7 +324,7 @@ if ($company === '' || $projectNo === '') {
     }
 
     if (!is_array($report)) {
-        $error = 'Geen opgeslagen rapport gevonden voor dit project. Genereer eerst een rapport op de startpagina.';
+        $error = __('report.error.not_found');
     }
 }
 
@@ -459,9 +431,9 @@ $tooltipPocCalc = finrap_tooltip_formula_html([
     ['type' => 'ref', 'table' => 'JobLedgerEntries', 'field' => 'Total_Cost_LCY'],
     ['type' => 'text', 'text' => ' / '],
     ['type' => 'ref', 'table' => 'ProjectenJobTaskLines', 'field' => 'EAC_Total_Cost'],
-    ['type' => 'text', 'text' => ' (fallback: '],
+    ['type' => 'text', 'text' => __('report.tooltip.fallback')],
     ['type' => 'ref', 'table' => 'ProjectenJobTaskLines', 'field' => 'Schedule_Total_Cost'],
-    ['type' => 'text', 'text' => ')'],
+    ['type' => 'text', 'text' => __('report.tooltip.fallback_close')],
 ]);
 $tooltipProjectNo = finrap_tooltip_formula_html([
     ['type' => 'ref', 'table' => 'Projecten', 'field' => 'No'],
@@ -481,17 +453,17 @@ $tooltipCustomer = finrap_tooltip_formula_html([
     ['type' => 'ref', 'table' => 'Projecten', 'field' => 'Bill_to_Customer_No'],
     ['type' => 'text', 'text' => ' + '],
     ['type' => 'ref', 'table' => 'Projecten', 'field' => 'Bill_to_Name'],
-    ['type' => 'text', 'text' => ' (fallback: '],
+    ['type' => 'text', 'text' => __('report.tooltip.fallback')],
     ['type' => 'ref', 'table' => 'Projecten', 'field' => 'Sell_to_Customer_No'],
     ['type' => 'text', 'text' => ' + '],
     ['type' => 'ref', 'table' => 'Projecten', 'field' => 'Sell_to_Customer_Name'],
-    ['type' => 'text', 'text' => ')'],
+    ['type' => 'text', 'text' => __('report.tooltip.fallback_close')],
 ]);
 $tooltipProjectManager = finrap_tooltip_formula_html([
     ['type' => 'ref', 'table' => 'Projecten', 'field' => 'Project_Manager'],
-    ['type' => 'text', 'text' => ' (fallback: '],
+    ['type' => 'text', 'text' => __('report.tooltip.fallback')],
     ['type' => 'ref', 'table' => 'Projecten', 'field' => 'Person_Responsible'],
-    ['type' => 'text', 'text' => ')'],
+    ['type' => 'text', 'text' => __('report.tooltip.fallback_close')],
 ]);
 $tooltipOrderDate = finrap_tooltip_formula_html([
     ['type' => 'ref', 'table' => 'Projecten', 'field' => 'Creation_Date'],
@@ -541,7 +513,7 @@ $tooltipTermijnAmount = finrap_tooltip_formula_html([
 $termijnLines = is_array($modal['termijn_lines'] ?? null) ? $modal['termijn_lines'] : [];
 ?>
 <!doctype html>
-<html lang="nl">
+<html lang="<?= htmlspecialchars(getHtmlLang(), ENT_QUOTES) ?>">
 
 <head>
     <meta charset="utf-8">
@@ -552,7 +524,8 @@ $termijnLines = is_array($modal['termijn_lines'] ?? null) ? $modal['termijn_line
     <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
     <link rel="manifest" href="site.webmanifest">
     <link rel="stylesheet" href="brand.css">
-    <title>FinRap <?= htmlspecialchars($reportProjectNo) ?></title>
+    <title><?= htmlspecialchars(__('app.title'), ENT_QUOTES) ?> <?= htmlspecialchars($reportProjectNo) ?></title>
+    <?php renderLanguageSwitcherStyles(); ?>
     <style>
         * {
             box-sizing: border-box;
@@ -1367,6 +1340,9 @@ $termijnLines = is_array($modal['termijn_lines'] ?? null) ? $modal['termijn_line
 </head>
 
 <body class="<?= $embedMode ? 'embed-mode' : '' ?>">
+    <?php if (!$embedMode): ?>
+        <?php renderLanguageSwitcher(); ?>
+    <?php endif; ?>
     <div class="project-overlay">
         <div class="project-modal" role="dialog" aria-modal="true" aria-labelledby="projectModalTitle">
 
@@ -1380,21 +1356,21 @@ $termijnLines = is_array($modal['termijn_lines'] ?? null) ? $modal['termijn_line
                     <section class="project-modal-header-panel">
                         <div class="project-modal-column">
                             <div class="project-field">
-                                <div class="project-field-label">Ordernumber</div>
+                                <div class="project-field-label"><?= htmlspecialchars(__('report.order_number'), ENT_QUOTES) ?></div>
                                 <div class="project-field-value"><?= finrap_render_value_with_tooltip_html(htmlspecialchars($reportProjectNo), $tooltipProjectNo) ?></div>
                             </div>
                             <div class="project-field">
-                                <div class="project-field-label">OrderReference</div>
+                                <div class="project-field-label"><?= htmlspecialchars(__('report.order_reference'), ENT_QUOTES) ?></div>
                                 <div class="project-field-value"><?= finrap_render_value_with_tooltip_html(htmlspecialchars($orderReference), $tooltipOrderReference) ?></div>
                             </div>
                         </div>
                         <div class="project-modal-column">
                             <div class="project-field">
-                                <div class="project-field-label">Description</div>
+                                <div class="project-field-label"><?= htmlspecialchars(__('report.description'), ENT_QUOTES) ?></div>
                                 <div class="project-field-value"><?= finrap_render_value_with_tooltip_html(htmlspecialchars($description), $tooltipDescription) ?></div>
                             </div>
                             <div class="project-field">
-                                <div class="project-field-label">Rapport gemaakt op</div>
+                                <div class="project-field-label"><?= htmlspecialchars(__('report.created_at'), ENT_QUOTES) ?></div>
                                 <div class="project-field-value"><?= finrap_render_value_with_tooltip_html(htmlspecialchars($createdAtFormatted), $tooltipCreatedAt) ?></div>
                             </div>
                         </div>
@@ -1403,35 +1379,35 @@ $termijnLines = is_array($modal['termijn_lines'] ?? null) ? $modal['termijn_line
                     <section class="project-modal-info-panel">
                         <div class="project-modal-column">
                             <div class="project-field">
-                                <div class="project-field-label">Customer</div>
+                                <div class="project-field-label"><?= htmlspecialchars(__('report.customer'), ENT_QUOTES) ?></div>
                                 <div class="project-field-value"><?= finrap_render_value_with_tooltip_html(htmlspecialchars($customer), $tooltipCustomer) ?></div>
                             </div>
                             <div class="project-field">
-                                <div class="project-field-label">Project manager</div>
+                                <div class="project-field-label"><?= htmlspecialchars(__('report.project_manager'), ENT_QUOTES) ?></div>
                                 <div class="project-field-value">
                                     <?= finrap_render_value_with_tooltip_html(str_replace("KVT\\", "", htmlspecialchars($projectManager)), $tooltipProjectManager) ?>
                                 </div>
                             </div>
                             <div class="project-field">
-                                <div class="project-field-label">Order type</div>
+                                <div class="project-field-label"><?= htmlspecialchars(__('report.order_type'), ENT_QUOTES) ?></div>
                                 <div class="project-field-value">-</div>
                             </div>
                         </div>
                         <div class="project-modal-column">
                             <div class="project-field">
-                                <div class="project-field-label">Order Date</div>
+                                <div class="project-field-label"><?= htmlspecialchars(__('report.order_date'), ENT_QUOTES) ?></div>
                                 <div class="project-field-value">
                                     <?= finrap_render_value_with_tooltip_html(htmlspecialchars((string) ($project['Creation_Date'] ?? '')), $tooltipOrderDate) ?>
                                 </div>
                             </div>
                             <div class="project-field">
-                                <div class="project-field-label">Completed date</div>
+                                <div class="project-field-label"><?= htmlspecialchars(__('report.completed_date'), ENT_QUOTES) ?></div>
                                 <div class="project-field-value">
                                     <?= finrap_render_value_with_tooltip_html(htmlspecialchars((string) ($project['Ending_Date'] ?? '')), $tooltipCompletedDate) ?>
                                 </div>
                             </div>
                             <div class="project-field">
-                                <div class="project-field-label">Sales Manager</div>
+                                <div class="project-field-label"><?= htmlspecialchars(__('report.sales_manager'), ENT_QUOTES) ?></div>
                                 <div class="project-field-value">
                                     <?= finrap_render_value_with_tooltip_html(htmlspecialchars((string) ($project['KVT_Sales_Person_Code'] ?? '')), $tooltipSalesManager) ?>
                                 </div>
@@ -1443,19 +1419,18 @@ $termijnLines = is_array($modal['termijn_lines'] ?? null) ? $modal['termijn_line
                         <table class="project-metric-table">
                             <thead>
                                 <tr>
-                                    <th class="is-right" data-tooltip="Totale contractwaarde met klant">Contract Value</th>
-                                    <th class="is-right" data-tooltip="Totale verwachte directe kosten">Total Direct Cost
+                                    <th class="is-right" data-tooltip="<?= htmlspecialchars(__('report.tooltip.contract_value'), ENT_QUOTES) ?>"><?= htmlspecialchars(__('report.contract_value'), ENT_QUOTES) ?></th>
+                                    <th class="is-right" data-tooltip="<?= htmlspecialchars(__('report.tooltip.total_direct_cost'), ENT_QUOTES) ?>"><?= htmlspecialchars(__('report.total_direct_cost'), ENT_QUOTES) ?>
                                     </th>
-                                    <th class="is-right" data-tooltip="Contractwaarde minus directe kosten">Gross Profit
+                                    <th class="is-right" data-tooltip="<?= htmlspecialchars(__('report.tooltip.gross_profit'), ENT_QUOTES) ?>"><?= htmlspecialchars(__('report.gross_profit'), ENT_QUOTES) ?>
                                     </th>
-                                    <th class="is-right" data-tooltip="Verschil tussen begrote en verwachte kosten">Variance
-                                        Budget - EAC</th>
-                                    <th class="is-right" data-tooltip="Netto winst na alle kosten en verwachtingen">Order
-                                        Result</th>
-                                    <th class="is-right" data-tooltip="Totaal gefactureerde bedrag tot nu toe">Installments
-                                        Invoiced</th>
-                                    <th class="is-right" data-tooltip="Totaal ontvangen betalingen tot nu toe">Installments
-                                        Received</th>
+                                    <th class="is-right" data-tooltip="<?= htmlspecialchars(__('report.tooltip.variance'), ENT_QUOTES) ?>"><?= htmlspecialchars(__('report.variance'), ENT_QUOTES) ?></th>
+                                    <th class="is-right" data-tooltip="<?= htmlspecialchars(__('report.tooltip.order_result'), ENT_QUOTES) ?>"><?= htmlspecialchars(__('report.order_result'), ENT_QUOTES) ?>
+                                    </th>
+                                    <th class="is-right" data-tooltip="<?= htmlspecialchars(__('report.tooltip.installments_invoiced'), ENT_QUOTES) ?>"><?= htmlspecialchars(__('report.installments_invoiced'), ENT_QUOTES) ?>
+                                    </th>
+                                    <th class="is-right" data-tooltip="<?= htmlspecialchars(__('report.tooltip.installments_received'), ENT_QUOTES) ?>"><?= htmlspecialchars(__('report.installments_received'), ENT_QUOTES) ?>
+                                    </th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -1493,49 +1468,45 @@ $termijnLines = is_array($modal['termijn_lines'] ?? null) ? $modal['termijn_line
                     <section class="analytics-blocks-section">
 
                         <div class="analytics-block">
-                            <div class="analytics-block-header">Uren &amp; marges</div>
+                            <div class="analytics-block-header"><?= htmlspecialchars(__('report.block.hours_margins'), ENT_QUOTES) ?></div>
                             <div class="analytics-block-body">
                                 <div class="analytics-row">
-                                    <span class="analytics-label" data-tooltip="Gepland aantal uren voor het project">Budget
-                                        Hours</span>
+                                    <span class="analytics-label" data-tooltip="<?= htmlspecialchars(__('report.tooltip.hours.budget'), ENT_QUOTES) ?>"><?= htmlspecialchars(__('report.hours.budget'), ENT_QUOTES) ?></span>
                                     <span
                                         class="analytics-value has-value-tooltip"><?= htmlspecialchars(finrap_format_hours($hoursBudget)) ?><span class="value-tooltip-rich"><?= $tooltipBudgetHours ?></span></span>
                                 </div>
                                 <div class="analytics-row">
                                     <span class="analytics-label"
-                                        data-tooltip="Verwacht aantal uren op basis van huidige prognose">Estimated
-                                        Hours</span>
+                                        data-tooltip="<?= htmlspecialchars(__('report.tooltip.hours.estimated'), ENT_QUOTES) ?>"><?= htmlspecialchars(__('report.hours.estimated'), ENT_QUOTES) ?></span>
                                     <span
                                         class="analytics-value has-value-tooltip"><?= htmlspecialchars(finrap_format_hours($hoursEstimated)) ?><span class="value-tooltip-rich"><?= $tooltipEstimatedHours ?></span></span>
                                 </div>
                                 <div class="analytics-row">
                                     <span class="analytics-label"
-                                        data-tooltip="Werkelijk geboekt aantal uren tot nu toe">Booked Hours</span>
+                                        data-tooltip="<?= htmlspecialchars(__('report.tooltip.hours.booked'), ENT_QUOTES) ?>"><?= htmlspecialchars(__('report.hours.booked'), ENT_QUOTES) ?></span>
                                     <span
                                         class="analytics-value has-value-tooltip"><?= htmlspecialchars(finrap_format_hours($hoursBooked)) ?><span class="value-tooltip-rich"><?= $tooltipBookedHours ?></span></span>
                                 </div>
                                 <div class="analytics-row">
-                                    <span class="analytics-label" data-tooltip="Resterende uren: Geschat - Geboekt">Hours to
-                                        go</span>
+                                    <span class="analytics-label" data-tooltip="<?= htmlspecialchars(__('report.tooltip.hours.to_go'), ENT_QUOTES) ?>"><?= htmlspecialchars(__('report.hours.to_go'), ENT_QUOTES) ?></span>
                                     <span
                                         class="analytics-value <?= finrap_currency_sign_class($hoursToGo) ?> has-value-tooltip"><?= htmlspecialchars(finrap_format_hours($hoursToGo)) ?><span class="value-tooltip-rich"><?= $tooltipHoursToGo ?></span></span>
                                 </div>
                                 <div class="analytics-row">
                                     <span class="analytics-label"
-                                        data-tooltip="Bruto winst in procenten van contractwaarde">Gross profit %</span>
+                                        data-tooltip="<?= htmlspecialchars(__('report.tooltip.hours.gross_profit_pct'), ENT_QUOTES) ?>"><?= htmlspecialchars(__('report.hours.gross_profit_pct'), ENT_QUOTES) ?></span>
                                     <span
                                         class="analytics-value <?= finrap_currency_sign_class($grossProfitPct) ?> has-value-tooltip"><?= htmlspecialchars(finrap_format_percent($grossProfitPct)) ?><span class="value-tooltip-rich"><?= $tooltipGrossProfitPct ?></span></span>
                                 </div>
                                 <div class="analytics-row">
                                     <span class="analytics-label"
-                                        data-tooltip="Netto winst in procenten van contractwaarde">Order result %</span>
+                                        data-tooltip="<?= htmlspecialchars(__('report.tooltip.hours.order_result_pct'), ENT_QUOTES) ?>"><?= htmlspecialchars(__('report.hours.order_result_pct'), ENT_QUOTES) ?></span>
                                     <span
                                         class="analytics-value <?= finrap_currency_sign_class($orderResultPct) ?> has-value-tooltip"><?= htmlspecialchars(finrap_format_percent($orderResultPct)) ?><span class="value-tooltip-rich"><?= $tooltipOrderResultPct ?></span></span>
                                 </div>
                                 <div class="analytics-row">
                                     <span class="analytics-label"
-                                        data-tooltip="Verschil tussen budget en EAC in procenten van contractwaarde">Variance
-                                        budget - EAC %</span>
+                                        data-tooltip="<?= htmlspecialchars(__('report.tooltip.hours.variance_pct'), ENT_QUOTES) ?>"><?= htmlspecialchars(__('report.hours.variance_pct'), ENT_QUOTES) ?></span>
                                     <span
                                         class="analytics-value <?= finrap_currency_sign_class($variancePct) ?> has-value-tooltip"><?= htmlspecialchars(finrap_format_percent($variancePct)) ?><span class="value-tooltip-rich"><?= $tooltipVariancePct ?></span></span>
                                 </div>
@@ -1543,45 +1514,42 @@ $termijnLines = is_array($modal['termijn_lines'] ?? null) ? $modal['termijn_line
                         </div>
 
                         <div class="analytics-block">
-                            <div class="analytics-block-header">Verwachte uitkomsten</div>
+                            <div class="analytics-block-header"><?= htmlspecialchars(__('report.block.expected_outcomes'), ENT_QUOTES) ?></div>
                             <div class="analytics-block-body">
                                 <div class="analytics-row">
-                                    <span class="analytics-label" data-tooltip="Verwachte kosten minus begrote kosten">Exp.
-                                        Variance Budget - EAC</span>
+                                    <span class="analytics-label" data-tooltip="<?= htmlspecialchars(__('report.tooltip.exp.variance'), ENT_QUOTES) ?>"><?= htmlspecialchars(__('report.exp.variance'), ENT_QUOTES) ?></span>
                                     <span
                                         class="analytics-value <?= finrap_currency_sign_class($expVariance) ?> has-value-tooltip"><?= htmlspecialchars(finrap_format_currency($expVariance)) ?><span class="value-tooltip-rich"><?= $tooltipExpVariance ?></span></span>
                                 </div>
                                 <div class="analytics-row">
                                     <span class="analytics-label"
-                                        data-tooltip="Contractwaarde minus verwachte kosten">Expected Order Result</span>
+                                        data-tooltip="<?= htmlspecialchars(__('report.tooltip.exp.order_result'), ENT_QUOTES) ?>"><?= htmlspecialchars(__('report.exp.order_result'), ENT_QUOTES) ?></span>
                                     <span
                                         class="analytics-value <?= finrap_currency_sign_class($expOrderResult) ?> has-value-tooltip"><?= htmlspecialchars(finrap_format_currency($expOrderResult)) ?><span class="value-tooltip-rich"><?= $tooltipExpOrderResult ?></span></span>
                                 </div>
                                 <div class="analytics-row">
                                     <span class="analytics-label"
-                                        data-tooltip="Gerealiseerde winst uit WIP-berekening, oftewel wat er tot nu toe overblijft">IPR
-                                        result</span>
+                                        data-tooltip="<?= htmlspecialchars(__('report.tooltip.exp.ipr_result'), ENT_QUOTES) ?>"><?= htmlspecialchars(__('report.exp.ipr_result'), ENT_QUOTES) ?></span>
                                     <span
                                         class="analytics-value <?= finrap_currency_sign_class($iprResult) ?> has-value-tooltip"><?= htmlspecialchars(finrap_format_currency($iprResult)) ?><span class="value-tooltip-rich"><?= $tooltipIprResult ?></span></span>
                                 </div>
                                 <div class="analytics-row">
-                                    <span class="analytics-label" data-tooltip="Voortgang in % van het project">POC</span>
+                                    <span class="analytics-label" data-tooltip="<?= htmlspecialchars(__('report.tooltip.exp.poc'), ENT_QUOTES) ?>"><?= htmlspecialchars(__('report.exp.poc'), ENT_QUOTES) ?></span>
                                     <span class="analytics-value has-value-tooltip"><?= htmlspecialchars(finrap_format_percent($pocPercent)) ?><span class="value-tooltip-rich"><?= $tooltipPoc ?></span></span>
                                 </div>
                                 <div class="analytics-row">
                                     <span class="analytics-label"
-                                        data-tooltip="Booked Cost totaal gedeeld door EAC totaal, met Budget Cost totaal als fallback">POC
-                                        Calc.</span>
+                                        data-tooltip="<?= htmlspecialchars(__('report.tooltip.exp.poc_calc'), ENT_QUOTES) ?>"><?= htmlspecialchars(__('report.exp.poc_calc'), ENT_QUOTES) ?></span>
                                     <span class="analytics-value has-value-tooltip"><?= htmlspecialchars(finrap_format_percent($pocCalcPercent)) ?><span class="value-tooltip-rich"><?= $tooltipPocCalc ?></span></span>
                                 </div>
                             </div>
                         </div>
 
                         <div class="analytics-block">
-                            <div class="analytics-block-header">Termijn facturen</div>
+                            <div class="analytics-block-header"><?= htmlspecialchars(__('report.block.installments'), ENT_QUOTES) ?></div>
                             <div class="analytics-block-body">
                                 <?php if (count($termijnLines) === 0): ?>
-                                    <div class="termijn-empty">Geen termijn facturen gevonden.</div>
+                                    <div class="termijn-empty"><?= htmlspecialchars(__('report.termijn.empty'), ENT_QUOTES) ?></div>
                                 <?php else: ?>
                                     <ul class="termijn-list">
                                         <?php foreach ($termijnLines as $termijnLine): ?>
@@ -1591,11 +1559,11 @@ $termijnLines = is_array($modal['termijn_lines'] ?? null) ? $modal['termijn_line
                                             $termijnDate = finrap_format_date_nl((string) ($termijnLine['planning_date'] ?? ''));
                                             $termijnStatus = trim((string) ($termijnLine['status'] ?? ''));
                                             $termijnStatus = $termijnStatus !== '' ? $termijnStatus : (
-                                                (float) ($termijnLine['invoiced_amount'] ?? 0.0) > 0.000001 ? 'Gefactureerd' : 'Openstaand'
+                                                (float) ($termijnLine['invoiced_amount'] ?? 0.0) > 0.000001 ? __('report.termijn.status.invoiced') : __('report.termijn.status.open')
                                             );
                                             ?>
                                             <li class="termijn-item">
-                                                <span class="termijn-no"><?= finrap_render_value_with_tooltip_html('Termijn ' . htmlspecialchars((string) $termijnNo), $tooltipTermijnNo) ?></span>
+                                                <span class="termijn-no"><?= finrap_render_value_with_tooltip_html(htmlspecialchars(__('report.termijn.label', $termijnNo)), $tooltipTermijnNo) ?></span>
                                                 <span class="termijn-meta"><?= finrap_render_value_with_tooltip_html(htmlspecialchars($termijnDate), $tooltipTermijnDate) ?></span>
                                                 <span class="termijn-status"><?= finrap_render_value_with_tooltip_html(htmlspecialchars($termijnStatus), $tooltipTermijnStatus) ?></span>
                                                 <span
@@ -1625,6 +1593,9 @@ $termijnLines = is_array($modal['termijn_lines'] ?? null) ? $modal['termijn_line
                 window.print();
             });
         </script>
+    <?php endif; ?>
+    <?php if (!$embedMode): ?>
+        <?php renderLanguageSwitcherScript(); ?>
     <?php endif; ?>
 </body>
 
