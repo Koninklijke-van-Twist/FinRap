@@ -4,3 +4,5 @@ web/auth.php
 web/cache/
 
 BC Webservices.txt
+
+data/user_prefs/

@@ -8,6 +8,7 @@ error_reporting(E_ALL);
  */
 require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/logincheck.php';
+require_once __DIR__ . '/localization.php';
 require_once __DIR__ . '/odata.php';
 require_once __DIR__ . '/auth_helper.php';
 require_once __DIR__ . '/finrap_data.php';
@@ -23,7 +24,85 @@ function index_json_response(array $payload, int $statusCode = 200): void
 	exit;
 }
 
-function index_discover_companies(): array
+function index_default_companies(): array
+{
+	return [
+		'Koninklijke van Twist',
+		'Hunter van Twist',
+		'KVT Gas',
+	];
+}
+
+function index_companies_cache_path(): string
+{
+	return __DIR__ . DIRECTORY_SEPARATOR . 'cache' . DIRECTORY_SEPARATOR . 'index_companies.json';
+}
+
+function index_read_companies_cache(): ?array
+{
+	$path = index_companies_cache_path();
+	if (!is_file($path)) {
+		return null;
+	}
+
+	$raw = @file_get_contents($path);
+	if (!is_string($raw) || trim($raw) === '') {
+		return null;
+	}
+
+	$decoded = json_decode($raw, true);
+	if (!is_array($decoded)) {
+		return null;
+	}
+
+	$companies = is_array($decoded['companies'] ?? null) ? $decoded['companies'] : [];
+	$normalized = [];
+	foreach ($companies as $company) {
+		$name = trim((string) $company);
+		if ($name !== '') {
+			$normalized[] = $name;
+		}
+	}
+
+	if ($normalized === []) {
+		return null;
+	}
+
+	return [
+		'companies' => array_values(array_unique($normalized)),
+		'cached_at' => (int) ($decoded['cached_at'] ?? 0),
+	];
+}
+
+function index_write_companies_cache(array $companies): array
+{
+	$normalized = [];
+	foreach ($companies as $company) {
+		$name = trim((string) $company);
+		if ($name !== '') {
+			$normalized[] = $name;
+		}
+	}
+
+	$normalized = array_values(array_unique($normalized));
+	if ($normalized === []) {
+		return index_default_companies();
+	}
+
+	$dir = dirname(index_companies_cache_path());
+	if (!is_dir($dir)) {
+		@mkdir($dir, 0777, true);
+	}
+
+	@file_put_contents(index_companies_cache_path(), json_encode([
+		'companies' => $normalized,
+		'cached_at' => time(),
+	], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT), LOCK_EX);
+
+	return $normalized;
+}
+
+function index_discover_companies_live(): array
 {
 	try {
 		$result = auth_discover_companies_across_active_environments(300);
@@ -33,14 +112,26 @@ function index_discover_companies(): array
 	}
 
 	if ($companies === []) {
-		$companies = [
-			'Koninklijke van Twist',
-			'Hunter van Twist',
-			'KVT Gas',
-		];
+		return index_companies_for_page();
 	}
 
-	return $companies;
+	return index_write_companies_cache($companies);
+}
+
+function index_companies_for_page(): array
+{
+	$cached = index_read_companies_cache();
+	if (is_array($cached['companies'] ?? null) && $cached['companies'] !== []) {
+		return $cached['companies'];
+	}
+
+	return index_default_companies();
+}
+
+/** @deprecated Use index_companies_for_page() or index_discover_companies_live(). */
+function index_discover_companies(): array
+{
+	return index_companies_for_page();
 }
 
 function index_month_label(string $yearMonth): string
@@ -61,7 +152,7 @@ function index_month_label(string $yearMonth): string
 	];
 
 	[$year, $month] = explode('-', $yearMonth);
-	return ($months[$month] ?? $month) . ' ' . $year;
+	return LOC($monthKey = 'month.' . $month) . ' ' . $year;
 }
 
 function index_get_user_email(): string
@@ -203,7 +294,17 @@ function index_add_recent_project(array $settings, string $company, string $proj
 /**
  * Page load
  */
-$companies = index_discover_companies();
+$requestAction = trim((string) ($_GET['action'] ?? ''));
+
+if ($requestAction === 'discover_companies') {
+	$companies = index_discover_companies_live();
+	index_json_response([
+		'ok' => true,
+		'companies' => $companies,
+	]);
+}
+
+$companies = index_companies_for_page();
 $userEmail = index_get_user_email();
 $userSettings = index_load_user_settings($userEmail);
 $defaultCompany = is_array($userSettings) ? (string) ($userSettings['finrap_selected_company'] ?? '') : '';
@@ -219,14 +320,14 @@ $recentProjects = index_normalize_recent_projects(
 if (($_GET['action'] ?? '') === 'save_company_preference') {
 	$company = trim((string) ($_POST['company'] ?? ''));
 	if ($company === '' || !in_array($company, $companies, true)) {
-		index_json_response(['ok' => false, 'error' => 'Kies een geldig bedrijf.'], 400);
+		index_json_response(['ok' => false, 'error' => LOC('error.company_invalid')], 400);
 	}
 
 	$settings = index_load_user_settings($userEmail);
 	$settings['finrap_selected_company'] = $company;
 	$saveOk = index_save_user_settings($userEmail, $settings);
 	if (!$saveOk) {
-		index_json_response(['ok' => false, 'error' => 'Opslaan van gebruikersvoorkeur is mislukt.'], 500);
+		index_json_response(['ok' => false, 'error' => LOC('error.save_preference_failed')], 500);
 	}
 
 	index_json_response([
@@ -240,16 +341,16 @@ if (($_GET['action'] ?? '') === 'find_project') {
 	$projectNo = trim((string) ($_POST['project_no'] ?? ''));
 
 	if ($company === '' || !in_array($company, $companies, true)) {
-		index_json_response(['ok' => false, 'error' => 'Kies een geldig bedrijf.'], 400);
+		index_json_response(['ok' => false, 'error' => LOC('error.company_invalid')], 400);
 	}
 	if ($projectNo === '') {
-		index_json_response(['ok' => false, 'error' => 'Voer een projectnummer in.'], 400);
+		index_json_response(['ok' => false, 'error' => LOC('error.project_no_required')], 400);
 	}
 
 	try {
 		$project = finrap_fetch_project($company, $projectNo, 300);
 		if (!is_array($project)) {
-			index_json_response(['ok' => false, 'error' => 'Project niet gevonden in BC.'], 404);
+			index_json_response(['ok' => false, 'error' => LOC('error.project_not_found')], 404);
 		}
 
 		$resolvedProjectNo = (string) ($project['No'] ?? $projectNo);
@@ -268,7 +369,7 @@ if (($_GET['action'] ?? '') === 'find_project') {
 			'recent_projects' => $recentProjectsPayload,
 		]);
 	} catch (Throwable $error) {
-		index_json_response(['ok' => false, 'error' => 'Project zoeken mislukt: ' . $error->getMessage()], 500);
+		index_json_response(['ok' => false, 'error' => LOC('error.find_project_failed', $error->getMessage())], 500);
 	}
 }
 
@@ -276,7 +377,7 @@ if (($_GET['action'] ?? '') === 'list_reports') {
 	$company = trim((string) ($_POST['company'] ?? ''));
 	$projectNo = trim((string) ($_POST['project_no'] ?? ''));
 	if ($company === '' || !in_array($company, $companies, true) || $projectNo === '') {
-		index_json_response(['ok' => false, 'error' => 'Ongeldige invoer.'], 400);
+		index_json_response(['ok' => false, 'error' => LOC('error.invalid_input')], 400);
 	}
 
 	index_json_response([
@@ -290,10 +391,10 @@ if (($_GET['action'] ?? '') === 'generate_report') {
 	$projectNo = trim((string) ($_POST['project_no'] ?? ''));
 
 	if ($company === '' || !in_array($company, $companies, true)) {
-		index_json_response(['ok' => false, 'error' => 'Kies een geldig bedrijf.'], 400);
+		index_json_response(['ok' => false, 'error' => LOC('error.company_invalid')], 400);
 	}
 	if ($projectNo === '') {
-		index_json_response(['ok' => false, 'error' => 'Projectnummer ontbreekt.'], 400);
+		index_json_response(['ok' => false, 'error' => LOC('error.project_no_missing')], 400);
 	}
 
 	try {
@@ -302,18 +403,19 @@ if (($_GET['action'] ?? '') === 'generate_report') {
 		$resolvedProjectNo = (string) ($report['project_no'] ?? $projectNo);
 		$reportId = finrap_save_report_snapshot($company, $resolvedProjectNo, $report);
 		if (!is_string($reportId) || $reportId === '') {
-			index_json_response(['ok' => false, 'error' => 'Opslaan van het rapport is mislukt.'], 500);
+			index_json_response(['ok' => false, 'error' => LOC('error.save_report_failed')], 500);
 		}
 
+		$reportLang = rawurlencode(getCurrentLanguage());
 		index_json_response([
 			'ok' => true,
 			'project_no' => $resolvedProjectNo,
 			'report_id' => $reportId,
 			'reports' => finrap_list_report_snapshots($company, $resolvedProjectNo),
-			'report_url' => 'finrap.php?company=' . rawurlencode($company) . '&project_no=' . rawurlencode($resolvedProjectNo) . '&report_id=' . rawurlencode($reportId),
+			'report_url' => 'finrap.php?company=' . rawurlencode($company) . '&project_no=' . rawurlencode($resolvedProjectNo) . '&report_id=' . rawurlencode($reportId) . '&lang=' . $reportLang,
 		]);
 	} catch (Throwable $error) {
-		index_json_response(['ok' => false, 'error' => 'Genereren mislukt: ' . $error->getMessage()], 500);
+		index_json_response(['ok' => false, 'error' => LOC('error.generate_failed', $error->getMessage())], 500);
 	}
 }
 
@@ -323,12 +425,12 @@ if (($_GET['action'] ?? '') === 'delete_report') {
 	$reportId = trim((string) ($_POST['report_id'] ?? ''));
 
 	if ($company === '' || !in_array($company, $companies, true) || $projectNo === '' || $reportId === '') {
-		index_json_response(['ok' => false, 'error' => 'Ongeldige invoer.'], 400);
+		index_json_response(['ok' => false, 'error' => LOC('error.invalid_input')], 400);
 	}
 
 	$deleted = finrap_delete_report_snapshot($company, $projectNo, $reportId);
 	if (!$deleted) {
-		index_json_response(['ok' => false, 'error' => 'Rapport verwijderen mislukt of bestaat niet.'], 404);
+		index_json_response(['ok' => false, 'error' => LOC('error.delete_report_failed')], 404);
 	}
 
 	index_json_response([
@@ -336,9 +438,50 @@ if (($_GET['action'] ?? '') === 'delete_report') {
 		'reports' => finrap_list_report_snapshots($company, $projectNo),
 	]);
 }
+$indexI18nKeys = [
+	'index.loader.finrap',
+	'index.loader.search',
+	'index.loader.wait',
+	'index.loader.prepare',
+	'index.loader.done',
+	'index.loader.step.search_connect',
+	'index.loader.step.search_fetch',
+	'index.loader.step.search_cache',
+	'index.loader.step.gen_verify',
+	'index.loader.step.gen_finance',
+	'index.loader.step.gen_costs',
+	'index.loader.step.gen_save',
+	'index.loader.step.gen_open',
+	'index.js.customer',
+	'index.js.customer_unavailable',
+	'index.js.generate_label',
+	'index.js.generate_btn',
+	'index.js.reports_label',
+	'index.js.reports_empty',
+	'index.js.btn.open',
+	'index.js.report_modal_title',
+	'index.js.recent_empty',
+	'index.js.recent_unknown_company',
+	'index.js.unknown_moment',
+	'index.js.status.enter_project',
+	'index.js.status.searching',
+	'index.js.status.search_subtitle',
+	'index.js.status.not_found',
+	'index.js.status.found',
+	'index.js.status.generating',
+	'index.js.status.generate_failed',
+	'index.js.status.generated',
+	'index.js.status.generate_subtitle',
+	'index.js.status.report_ready',
+	'index.js.status.delete_failed',
+	'index.js.status.deleted',
+	'index.js.network_error',
+	'index.js.loader_ellipsis',
+	'index.modal.title',
+];
 ?>
 <!doctype html>
-<html lang="nl">
+<html lang="<?= htmlspecialchars(getHtmlLang(), ENT_QUOTES) ?>">
 
 <head>
 	<meta charset="utf-8">
@@ -349,7 +492,8 @@ if (($_GET['action'] ?? '') === 'delete_report') {
 	<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
 	<link rel="manifest" href="site.webmanifest">
 	<link rel="stylesheet" href="brand.css">
-	<title>FinRap</title>
+	<title><?= htmlspecialchars(LOC('app.title'), ENT_QUOTES) ?></title>
+	<?php renderLanguageSwitcherStyles(); ?>
 	<style>
 		:root {
 			--bg: var(--kvt-page-bg);
@@ -898,18 +1042,19 @@ if (($_GET['action'] ?? '') === 'delete_report') {
 </head>
 
 <body>
+	<?php renderLanguageSwitcher(); ?>
 	<div class="wrap">
 		<section class="hero">
 			<img src="logo-website.png" alt="KVT logo">
-			<h1>Financieel Rapport</h1>
-			<p>Kies bedrijf, zoek project, genereer de huidige stand en open een opgeslagen rapport.</p>
+			<h1><?= htmlspecialchars(LOC('index.hero.title'), ENT_QUOTES) ?></h1>
+			<p><?= htmlspecialchars(LOC('index.hero.subtitle'), ENT_QUOTES) ?></p>
 		</section>
 
 		<div class="workspace-grid">
 			<section class="panel">
 				<div class="grid">
 					<div>
-						<label for="companySelect">Bedrijf</label>
+						<label for="companySelect"><?= htmlspecialchars(LOC('index.label.company'), ENT_QUOTES) ?></label>
 						<select id="companySelect">
 							<?php foreach ($companies as $company): ?>
 								<option value="<?= htmlspecialchars($company, ENT_QUOTES) ?>" <?= $company === $selectedCompany ? 'selected' : '' ?>>
@@ -919,19 +1064,19 @@ if (($_GET['action'] ?? '') === 'delete_report') {
 						</select>
 					</div>
 					<div>
-						<label for="projectInput">Projectnummer</label>
-						<input id="projectInput" type="text" autocomplete="off" placeholder="Bijv. P12345">
+						<label for="projectInput"><?= htmlspecialchars(LOC('index.label.project_no'), ENT_QUOTES) ?></label>
+						<input id="projectInput" type="text" autocomplete="off" placeholder="<?= htmlspecialchars(LOC('index.placeholder.project_no'), ENT_QUOTES) ?>">
 					</div>
 				</div>
 				<div class="row-actions">
-					<button id="findBtn" class="btn btn-main" type="button">Zoek project in BC</button>
+					<button id="findBtn" class="btn btn-main" type="button"><?= htmlspecialchars(LOC('index.btn.find'), ENT_QUOTES) ?></button>
 				</div>
-				<p id="statusLine" class="status">Nog geen project gezocht.</p>
+				<p id="statusLine" class="status"><?= htmlspecialchars(LOC('index.status.none'), ENT_QUOTES) ?></p>
 				<div id="projectArea"></div>
 			</section>
 
 			<aside class="panel sidebar-panel">
-				<h2 class="panel-title">Recent opgezochte projecten</h2>
+				<h2 class="panel-title"><?= htmlspecialchars(LOC('index.recent.title'), ENT_QUOTES) ?></h2>
 				<ul id="recentProjectsList" class="recent-project-list"></ul>
 			</aside>
 		</div>
@@ -939,10 +1084,10 @@ if (($_GET['action'] ?? '') === 'delete_report') {
 
 	<div id="finrapLoader" class="loader-overlay" aria-live="polite" aria-busy="true">
 		<div class="loader-card">
-			<h2 id="loaderTitle" class="loader-title">FinRap laden</h2>
-			<p id="loaderSubtitle" class="loader-subtitle">Even geduld...</p>
+			<h2 id="loaderTitle" class="loader-title"><?= htmlspecialchars(LOC('index.loader.finrap'), ENT_QUOTES) ?></h2>
+			<p id="loaderSubtitle" class="loader-subtitle"><?= htmlspecialchars(LOC('index.loader.wait'), ENT_QUOTES) ?></p>
 			<ul id="loaderSteps" class="loader-steps"></ul>
-			<p id="loaderLive" class="loader-live">Voorbereiden...</p>
+			<p id="loaderLive" class="loader-live"><?= htmlspecialchars(LOC('index.loader.prepare'), ENT_QUOTES) ?></p>
 		</div>
 	</div>
 
@@ -950,13 +1095,13 @@ if (($_GET['action'] ?? '') === 'delete_report') {
 		aria-labelledby="finrapModalTitle">
 		<div class="finrap-modal-dialog">
 			<div class="finrap-modal-head">
-				<h2 id="finrapModalTitle" class="finrap-modal-title">Financieel Rapport</h2>
+				<h2 id="finrapModalTitle" class="finrap-modal-title"><?= htmlspecialchars(LOC('index.modal.title'), ENT_QUOTES) ?></h2>
 				<div class="finrap-modal-actions">
-					<button id="finrapModalPrint" class="btn btn-print" type="button">Print</button>
-					<button id="finrapModalClose" class="btn btn-main" type="button">Sluiten</button>
+					<button id="finrapModalPrint" class="btn btn-print" type="button"><?= htmlspecialchars(LOC('index.modal.print'), ENT_QUOTES) ?></button>
+					<button id="finrapModalClose" class="btn btn-main" type="button"><?= htmlspecialchars(LOC('index.modal.close'), ENT_QUOTES) ?></button>
 				</div>
 			</div>
-			<iframe id="finrapModalFrame" class="finrap-modal-frame" title="Financieel rapport"></iframe>
+			<iframe id="finrapModalFrame" class="finrap-modal-frame" title="<?= htmlspecialchars(LOC('index.modal.report_iframe'), ENT_QUOTES) ?>"></iframe>
 		</div>
 	</div>
 
@@ -964,11 +1109,10 @@ if (($_GET['action'] ?? '') === 'delete_report') {
 		aria-labelledby="confirmDeleteStep1Title">
 		<div class="confirm-dialog">
 			<div id="confirmDeleteStep1Title" class="confirm-topbar is-red"></div>
-			<div class="confirm-body">Je staat op het punt een Financieel Rapport te verwijderen. Dit is permanent. Weet
-				je het zeker?</div>
+			<div class="confirm-body"><?= htmlspecialchars(LOC('index.delete.step1.body'), ENT_QUOTES) ?></div>
 			<div class="confirm-actions">
-				<button id="confirmDeleteStep1No" class="btn btn-print" type="button">Nee</button>
-				<button id="confirmDeleteStep1Yes" class="btn btn-main" type="button">Ja</button>
+				<button id="confirmDeleteStep1No" class="btn btn-print" type="button"><?= htmlspecialchars(LOC('index.btn.no'), ENT_QUOTES) ?></button>
+				<button id="confirmDeleteStep1Yes" class="btn btn-main" type="button"><?= htmlspecialchars(LOC('index.btn.yes'), ENT_QUOTES) ?></button>
 			</div>
 		</div>
 	</div>
@@ -977,11 +1121,10 @@ if (($_GET['action'] ?? '') === 'delete_report') {
 		aria-labelledby="confirmDeleteStep2Title">
 		<div class="confirm-dialog">
 			<div id="confirmDeleteStep2Title" class="confirm-topbar is-hazard"></div>
-			<div class="confirm-body">Het verwijderen van een Financieel
-				Rapport kan niet ongedaan gemaakt worden! Weet je het echt zeker?</div>
+			<div class="confirm-body"><?= htmlspecialchars(LOC('index.delete.step2.body'), ENT_QUOTES) ?></div>
 			<div class="confirm-actions">
-				<button id="confirmDeleteStep2No" class="btn btn-print" type="button">Nee</button>
-				<button id="confirmDeleteStep2Yes" class="btn btn-main" type="button">Ja</button>
+				<button id="confirmDeleteStep2No" class="btn btn-print" type="button"><?= htmlspecialchars(LOC('index.btn.no'), ENT_QUOTES) ?></button>
+				<button id="confirmDeleteStep2Yes" class="btn btn-main" type="button"><?= htmlspecialchars(LOC('index.btn.yes'), ENT_QUOTES) ?></button>
 			</div>
 		</div>
 	</div>
@@ -989,6 +1132,8 @@ if (($_GET['action'] ?? '') === 'delete_report') {
 	<script>
 		(function ()
 		{
+			const i18n = <?= localizationJsTranslations($indexI18nKeys) ?>;
+			const dateLocale = <?= json_encode(getDateLocale(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
 			const initialRecentProjects = <?= json_encode($recentProjects, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
 			const companySelect = document.getElementById('companySelect');
 			const projectInput = document.getElementById('projectInput');
@@ -1036,25 +1181,25 @@ if (($_GET['action'] ?? '') === 'delete_report') {
 
 				if (mode === 'search')
 				{
-					loaderTitle.textContent = 'Project zoeken in BC';
+					loaderTitle.textContent = i18n['index.loader.search'];
 					loaderStepsState = [
-						'Verbinding met omgeving maken',
-						'Projectgegevens ophalen',
-						'Gecachte maanden laden'
+						i18n['index.loader.step.search_connect'],
+						i18n['index.loader.step.search_fetch'],
+						i18n['index.loader.step.search_cache']
 					];
 				} else
 				{
-					loaderTitle.textContent = 'FinRap laden';
+					loaderTitle.textContent = i18n['index.loader.finrap'];
 					loaderStepsState = [
-						'Project verifiëren',
-						'Financiële data ophalen',
-						'Kostenregels opbouwen',
-						'Rapport opslaan',
-						'Rapport in modal openen'
+						i18n['index.loader.step.gen_verify'],
+						i18n['index.loader.step.gen_finance'],
+						i18n['index.loader.step.gen_costs'],
+						i18n['index.loader.step.gen_save'],
+						i18n['index.loader.step.gen_open']
 					];
 				}
 
-				loaderSubtitle.textContent = subtitle || 'Even geduld...';
+				loaderSubtitle.textContent = subtitle || i18n['index.loader.wait'];
 				loaderSteps.innerHTML = '';
 				loaderCurrentStep = -1;
 
@@ -1114,7 +1259,7 @@ if (($_GET['action'] ?? '') === 'delete_report') {
 				loaderMarkStep(loaderCurrentStep, 'loading');
 				if (loaderLive)
 				{
-					loaderLive.textContent = loaderStepsState[loaderCurrentStep] + '...';
+					loaderLive.textContent = i18n['index.js.loader_ellipsis'].replace('%s', loaderStepsState[loaderCurrentStep]);
 				}
 			}
 
@@ -1157,7 +1302,7 @@ if (($_GET['action'] ?? '') === 'delete_report') {
 				}
 				if (loaderLive)
 				{
-					loaderLive.textContent = message || 'Klaar.';
+					loaderLive.textContent = message || i18n['index.loader.done'];
 				}
 			}
 
@@ -1196,6 +1341,51 @@ if (($_GET['action'] ?? '') === 'delete_report') {
 				});
 			}
 
+			function renderCompanyOptions (companies, preferredCompany)
+			{
+				if (!companySelect || !Array.isArray(companies) || companies.length === 0)
+				{
+					return;
+				}
+
+				const currentValue = preferredCompany || companySelect.value;
+				companySelect.innerHTML = '';
+				companies.forEach(function (company)
+				{
+					const option = document.createElement('option');
+					option.value = company;
+					option.textContent = company;
+					if (company === currentValue)
+					{
+						option.selected = true;
+					}
+					companySelect.appendChild(option);
+				});
+
+				if (!Array.prototype.some.call(companySelect.options, function (opt) { return opt.selected; }))
+				{
+					companySelect.selectedIndex = 0;
+				}
+			}
+
+			function refreshCompaniesInBackground ()
+			{
+				postForm('index.php?action=discover_companies', {})
+					.then(function (json)
+					{
+						if (!json || !json.ok || !Array.isArray(json.companies) || json.companies.length === 0)
+						{
+							return;
+						}
+
+						renderCompanyOptions(json.companies, companySelect ? companySelect.value : '');
+					})
+					.catch(function ()
+					{
+						return null;
+					});
+			}
+
 			function formatRecentDate (value)
 			{
 				const dt = new Date(String(value || ''));
@@ -1204,7 +1394,7 @@ if (($_GET['action'] ?? '') === 'delete_report') {
 					return '';
 				}
 
-				return dt.toLocaleString('nl-NL', {
+				return dt.toLocaleString(dateLocale, {
 					year: 'numeric',
 					month: '2-digit',
 					day: '2-digit',
@@ -1218,10 +1408,10 @@ if (($_GET['action'] ?? '') === 'delete_report') {
 				const dt = new Date(String(value || ''));
 				if (Number.isNaN(dt.getTime()))
 				{
-					return String(value || 'Onbekend moment');
+					return String(value || i18n['index.js.unknown_moment']);
 				}
 
-				return dt.toLocaleString('nl-NL', {
+				return dt.toLocaleString(dateLocale, {
 					year: 'numeric',
 					month: '2-digit',
 					day: '2-digit',
@@ -1264,7 +1454,7 @@ if (($_GET['action'] ?? '') === 'delete_report') {
 				{
 					const empty = document.createElement('li');
 					empty.className = 'muted';
-					empty.textContent = 'Nog geen opgeslagen rapporten.';
+					empty.textContent = i18n['index.js.reports_empty'];
 					container.appendChild(empty);
 					return;
 				}
@@ -1290,13 +1480,14 @@ if (($_GET['action'] ?? '') === 'delete_report') {
 					const openBtn = document.createElement('button');
 					openBtn.className = 'btn btn-open';
 					openBtn.type = 'button';
-					openBtn.textContent = 'Open';
+					openBtn.textContent = i18n['index.js.btn.open'];
 					openBtn.addEventListener('click', function ()
 					{
 						const url = 'finrap.php?company=' + encodeURIComponent(companySelect.value)
 							+ '&project_no=' + encodeURIComponent(activeProjectNo)
-							+ '&report_id=' + encodeURIComponent(reportId);
-						openFinrapModal(url, 'Financieel Rapport ' + activeProjectNo, false);
+							+ '&report_id=' + encodeURIComponent(reportId)
+							+ '&lang=' + encodeURIComponent(<?= json_encode(getCurrentLanguage(), JSON_UNESCAPED_UNICODE) ?>);
+						openFinrapModal(url, i18n['index.js.report_modal_title'].replace('%s', activeProjectNo), false);
 					});
 
 					const deleteBtn = document.createElement('button');
@@ -1347,7 +1538,7 @@ if (($_GET['action'] ?? '') === 'delete_report') {
 				{
 					const empty = document.createElement('li');
 					empty.className = 'muted';
-					empty.textContent = 'Nog geen projecten gevonden in BC.';
+					empty.textContent = i18n['index.js.recent_empty'];
 					recentProjectsList.appendChild(empty);
 					return;
 				}
@@ -1373,7 +1564,7 @@ if (($_GET['action'] ?? '') === 'delete_report') {
 					const meta = document.createElement('span');
 					meta.className = 'recent-project-meta';
 					const dtLabel = formatRecentDate(entry.last_searched_at);
-					meta.textContent = (company !== '' ? company : 'Onbekend bedrijf') + (dtLabel !== '' ? ' | ' + dtLabel : '');
+					meta.textContent = (company !== '' ? company : i18n['index.js.recent_unknown_company']) + (dtLabel !== '' ? ' | ' + dtLabel : '');
 
 					button.appendChild(main);
 					button.appendChild(meta);
@@ -1422,10 +1613,10 @@ if (($_GET['action'] ?? '') === 'delete_report') {
 
 				if (finrapModalTitle)
 				{
-					finrapModalTitle.textContent = title || 'Financieel Rapport';
+					finrapModalTitle.textContent = title || i18n['index.modal.title'];
 				}
 
-				const finalUrl = url + (url.indexOf('?') === -1 ? '?' : '&') + 'embed=1';
+				const finalUrl = url + (url.indexOf('?') === -1 ? '?' : '&') + 'embed=1&lang=' + encodeURIComponent(<?= json_encode(getCurrentLanguage(), JSON_UNESCAPED_UNICODE) ?>);
 				finrapModalFrame.src = finalUrl;
 				finrapModalOverlay.classList.add('is-visible');
 				document.body.style.overflow = 'hidden';
@@ -1464,11 +1655,13 @@ if (($_GET['action'] ?? '') === 'delete_report') {
 				meta.className = 'meta';
 				const customerNo = String((project && project.Bill_to_Customer_No) || (project && project.Sell_to_Customer_No) || '').trim();
 				const customerName = String((project && project.Bill_to_Name) || (project && project.Sell_to_Customer_Name) || '').trim();
-				meta.textContent = customerNo !== '' ? ('Debiteur: ' + customerNo + (customerName ? ' - ' + customerName : '')) : 'Debiteur: niet beschikbaar';
+				meta.textContent = customerNo !== ''
+					? i18n['index.js.customer'].replace('%s', customerNo).replace('%s', customerName ? ' - ' + customerName : '')
+					: i18n['index.js.customer_unavailable'];
 				card.appendChild(meta);
 
 				const generateLabel = document.createElement('label');
-				generateLabel.textContent = 'Genereer huidige stand';
+				generateLabel.textContent = i18n['index.js.generate_label'];
 				generateLabel.style.marginTop = '12px';
 				card.appendChild(generateLabel);
 
@@ -1476,11 +1669,11 @@ if (($_GET['action'] ?? '') === 'delete_report') {
 				generateBtn.className = 'btn btn-alt';
 				generateBtn.type = 'button';
 				generateBtn.style.marginTop = '10px';
-				generateBtn.textContent = 'Genereer rapport en open';
+				generateBtn.textContent = i18n['index.js.generate_btn'];
 				card.appendChild(generateBtn);
 
 				const reportsLabel = document.createElement('label');
-				reportsLabel.textContent = 'Bestaande rapporten';
+				reportsLabel.textContent = i18n['index.js.reports_label'];
 				reportsLabel.style.marginTop = '14px';
 				card.appendChild(reportsLabel);
 
@@ -1491,9 +1684,9 @@ if (($_GET['action'] ?? '') === 'delete_report') {
 
 				generateBtn.addEventListener('click', function ()
 				{
-					setStatus('Genereren van huidige stand...', false);
+					setStatus(i18n['index.js.status.generating'], false);
 					generateBtn.disabled = true;
-					showLoader('generate', 'FinRap voor ' + no + ' - huidige stand');
+					showLoader('generate', i18n['index.js.status.generate_subtitle'].replace('%s', no));
 					postForm('index.php?action=generate_report', {
 						company: companySelect.value,
 						project_no: activeProjectNo
@@ -1503,23 +1696,23 @@ if (($_GET['action'] ?? '') === 'delete_report') {
 						if (!json.ok)
 						{
 							hideLoader();
-							setStatus(json.error || 'Genereren mislukt.', true);
+							setStatus(json.error || i18n['index.js.status.generate_failed'], true);
 							return;
 						}
 
-						finalizeLoader('Rapport gereed, wordt geopend...');
-						setStatus('Rapport gegenereerd.', false);
+						finalizeLoader(i18n['index.js.status.report_ready']);
+						setStatus(i18n['index.js.status.generated'], false);
 						renderProject(project, json.reports || []);
 						if (json.report_url)
 						{
-							openFinrapModal(json.report_url, 'Financieel Rapport ' + activeProjectNo, false);
+							openFinrapModal(json.report_url, i18n['index.js.report_modal_title'].replace('%s', activeProjectNo), false);
 						}
 						window.setTimeout(hideLoader, 320);
 					}).catch(function (error)
 					{
 						generateBtn.disabled = false;
 						hideLoader();
-						setStatus('Netwerkfout: ' + error.message, true);
+						setStatus(i18n['index.js.network_error'].replace('%s', error.message), true);
 					});
 				});
 
@@ -1531,13 +1724,13 @@ if (($_GET['action'] ?? '') === 'delete_report') {
 				const projectNo = String(projectNoInput || '').trim();
 				if (projectNo === '')
 				{
-					setStatus('Voer een projectnummer in.', true);
+					setStatus(i18n['index.js.status.enter_project'], true);
 					return;
 				}
 
-				setStatus('Project zoeken in BC...', false);
+				setStatus(i18n['index.js.status.searching'], false);
 				findBtn.disabled = true;
-				showLoader('search', 'Project ' + projectNo + ' opzoeken');
+				showLoader('search', i18n['index.js.status.search_subtitle'].replace('%s', projectNo));
 				postForm('index.php?action=find_project', {
 					company: companySelect.value,
 					project_no: projectNo
@@ -1548,7 +1741,7 @@ if (($_GET['action'] ?? '') === 'delete_report') {
 					{
 						hideLoader();
 						projectArea.innerHTML = '';
-						setStatus(json.error || 'Project niet gevonden.', true);
+						setStatus(json.error || i18n['index.js.status.not_found'], true);
 						return;
 					}
 
@@ -1558,15 +1751,15 @@ if (($_GET['action'] ?? '') === 'delete_report') {
 						renderRecentProjects();
 					}
 
-					finalizeLoader('Project gevonden.');
-					setStatus('Project gevonden: ' + String(json.project_no || projectNo), false);
+					finalizeLoader(i18n['index.loader.done']);
+					setStatus(i18n['index.js.status.found'].replace('%s', String(json.project_no || projectNo)), false);
 					renderProject(json.project || {}, json.reports || []);
 					window.setTimeout(hideLoader, 240);
 				}).catch(function (error)
 				{
 					findBtn.disabled = false;
 					hideLoader();
-					setStatus('Netwerkfout: ' + error.message, true);
+					setStatus(i18n['index.js.network_error'].replace('%s', error.message), true);
 				});
 			}
 
@@ -1582,6 +1775,7 @@ if (($_GET['action'] ?? '') === 'delete_report') {
 
 			recentProjects = normalizeRecentProjects(recentProjects);
 			renderRecentProjects();
+			refreshCompaniesInBackground();
 
 			if (confirmDeleteStep1No)
 			{
@@ -1628,16 +1822,16 @@ if (($_GET['action'] ?? '') === 'delete_report') {
 						closeDeleteModals();
 						if (!json.ok)
 						{
-							setStatus(json.error || 'Rapport verwijderen mislukt.', true);
+							setStatus(json.error || i18n['index.js.status.delete_failed'], true);
 							return;
 						}
 
-						setStatus('Rapport verwijderd.', false);
+						setStatus(i18n['index.js.status.deleted'], false);
 						renderProject(currentProjectData || {}, json.reports || []);
 					}).catch(function (error)
 					{
 						closeDeleteModals();
-						setStatus('Netwerkfout: ' + error.message, true);
+						setStatus(i18n['index.js.network_error'].replace('%s', error.message), true);
 					});
 				});
 			}
@@ -1685,6 +1879,7 @@ if (($_GET['action'] ?? '') === 'delete_report') {
 			});
 		})();
 	</script>
+	<?php renderLanguageSwitcherScript(); ?>
 </body>
 
 </html>
