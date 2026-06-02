@@ -1856,10 +1856,6 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
 
                     </section>
 
-                    <?php if (!$finrapOverridesEditable && $reportId !== ''): ?>
-                        <p class="finrap-overrides-readonly-notice"><?= htmlspecialchars(LOC('report.overrides.read_only_notice'), ENT_QUOTES) ?></p>
-                    <?php endif; ?>
-
                     <section class="project-modal-cost-groups-section">
                         <?php finrap_render_cost_group_table($taskRows, false, false, $finrapOverridesEditable, 'finrapCostDetailTable'); ?>
                     </section>
