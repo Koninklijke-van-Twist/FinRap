@@ -406,6 +406,8 @@ if (($_GET['action'] ?? '') === 'generate_report') {
 			index_json_response(['ok' => false, 'error' => LOC('error.save_report_failed')], 500);
 		}
 
+		finrap_inherit_overrides_from_previous_report($company, $resolvedProjectNo, $reportId);
+
 		$reportLang = rawurlencode(getCurrentLanguage());
 		index_json_response([
 			'ok' => true,

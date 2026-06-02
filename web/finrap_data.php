@@ -122,6 +122,105 @@ function finrap_save_report_overrides(string $company, string $projectNo, string
     return file_put_contents($path, $json, LOCK_EX) !== false;
 }
 
+function finrap_report_has_overrides(array $overrides): bool
+{
+    if (array_key_exists('poc_pm', $overrides) && $overrides['poc_pm'] !== null) {
+        return true;
+    }
+
+    $eacByTask = is_array($overrides['eac_by_task'] ?? null) ? $overrides['eac_by_task'] : [];
+
+    return $eacByTask !== [];
+}
+
+function finrap_find_latest_report_id(string $company, string $projectNo): ?string
+{
+    $reports = finrap_list_report_snapshots($company, $projectNo);
+    if ($reports === []) {
+        return null;
+    }
+
+    $reportId = trim((string) ($reports[0]['report_id'] ?? ''));
+
+    return $reportId !== '' ? $reportId : null;
+}
+
+function finrap_is_latest_report(string $company, string $projectNo, string $reportId): bool
+{
+    $latestReportId = finrap_find_latest_report_id($company, $projectNo);
+    if ($latestReportId === null) {
+        return false;
+    }
+
+    return strcasecmp($latestReportId, trim($reportId)) === 0;
+}
+
+function finrap_can_edit_report_overrides(string $company, string $projectNo, string $reportId): bool
+{
+    $reportId = trim($reportId);
+    if ($reportId === '') {
+        return false;
+    }
+
+    return finrap_is_latest_report($company, $projectNo, $reportId);
+}
+
+function finrap_copy_report_overrides(string $company, string $projectNo, string $sourceReportId, string $targetReportId): bool
+{
+    $sourceReportId = trim($sourceReportId);
+    $targetReportId = trim($targetReportId);
+    if ($sourceReportId === '' || $targetReportId === '' || strcasecmp($sourceReportId, $targetReportId) === 0) {
+        return false;
+    }
+
+    $sourceOverrides = finrap_load_report_overrides($company, $projectNo, $sourceReportId);
+    if (!finrap_report_has_overrides($sourceOverrides)) {
+        return false;
+    }
+
+    $payload = [
+        'eac_by_task' => is_array($sourceOverrides['eac_by_task'] ?? null) ? $sourceOverrides['eac_by_task'] : [],
+        'copied_from_report_id' => $sourceReportId,
+        'copied_at' => gmdate('c'),
+    ];
+
+    if (array_key_exists('poc_pm', $sourceOverrides)) {
+        $payload['poc_pm'] = $sourceOverrides['poc_pm'];
+    }
+
+    return finrap_save_report_overrides($company, $projectNo, $targetReportId, $payload);
+}
+
+function finrap_inherit_overrides_from_previous_report(string $company, string $projectNo, string $newReportId): bool
+{
+    $newReportId = trim($newReportId);
+    if ($newReportId === '') {
+        return false;
+    }
+
+    $reports = finrap_list_report_snapshots($company, $projectNo);
+    $previousReportId = null;
+    foreach ($reports as $reportEntry) {
+        if (!is_array($reportEntry)) {
+            continue;
+        }
+
+        $reportId = trim((string) ($reportEntry['report_id'] ?? ''));
+        if ($reportId === '' || strcasecmp($reportId, $newReportId) === 0) {
+            continue;
+        }
+
+        $previousReportId = $reportId;
+        break;
+    }
+
+    if ($previousReportId === null) {
+        return false;
+    }
+
+    return finrap_copy_report_overrides($company, $projectNo, $previousReportId, $newReportId);
+}
+
 function finrap_delete_report_overrides(string $company, string $projectNo, string $reportId): bool
 {
     $path = finrap_report_overrides_path($company, $projectNo, $reportId);

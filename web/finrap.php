@@ -375,6 +375,10 @@ if (($_GET['action'] ?? '') === 'save_overrides') {
         finrap_json_response(['ok' => false, 'error' => LOC('error.invalid_input')], 400);
     }
 
+    if (!finrap_can_edit_report_overrides($saveCompany, $saveProjectNo, $saveReportId)) {
+        finrap_json_response(['ok' => false, 'error' => LOC('error.report_overrides_locked')], 403);
+    }
+
     $overridePayload = [
         'eac_by_task' => [],
         'updated_at' => gmdate('c'),
@@ -640,6 +644,7 @@ $finrapClientTaskRows = finrap_task_rows_for_client($taskRows);
 $finrapClientEacOverrides = $eacOverrides;
 $finrapReportId = $reportId;
 $finrapPocPmHasOverride = $pocPmHasOverride;
+$finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides($company, $projectNo, $reportId);
 ?>
 <!doctype html>
 <html lang="<?= htmlspecialchars(getHtmlLang(), ENT_QUOTES) ?>">
@@ -1493,6 +1498,17 @@ $finrapPocPmHasOverride = $pocPmHasOverride;
             text-decoration: underline;
         }
 
+        .finrap-overrides-readonly-notice {
+            margin: 0 0 12px;
+            padding: 10px 12px;
+            border: 1px solid #dbeafe;
+            border-radius: 10px;
+            background: #eff6ff;
+            color: #1e3a8a;
+            font-size: 12px;
+            line-height: 1.45;
+        }
+
         .finrap-value-modal-overlay {
             position: fixed;
             inset: 0;
@@ -1783,9 +1799,13 @@ $finrapPocPmHasOverride = $pocPmHasOverride;
                                 <div class="analytics-row">
                                     <span class="analytics-label" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.exp.poc_pm'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.exp.poc_pm'), ENT_QUOTES) ?></span>
                                     <span class="analytics-value has-value-tooltip">
+                                        <?php if ($finrapOverridesEditable): ?>
                                         <button type="button" class="finrap-editable-value-btn" id="pocPmButton" data-edit-kind="poc_pm">
                                             <?= htmlspecialchars($pocPm === null ? '-' : finrap_format_percent($pocPm)) ?>
                                         </button>
+                                        <?php else: ?>
+                                        <span id="pocPmButton"><?= htmlspecialchars($pocPm === null ? '-' : finrap_format_percent($pocPm)) ?></span>
+                                        <?php endif; ?>
                                         <span class="value-tooltip-rich"><?= $tooltipPocPm ?></span>
                                     </span>
                                 </div>
@@ -1836,8 +1856,12 @@ $finrapPocPmHasOverride = $pocPmHasOverride;
 
                     </section>
 
+                    <?php if (!$finrapOverridesEditable && $reportId !== ''): ?>
+                        <p class="finrap-overrides-readonly-notice"><?= htmlspecialchars(LOC('report.overrides.read_only_notice'), ENT_QUOTES) ?></p>
+                    <?php endif; ?>
+
                     <section class="project-modal-cost-groups-section">
-                        <?php finrap_render_cost_group_table($taskRows, false, false, true, 'finrapCostDetailTable'); ?>
+                        <?php finrap_render_cost_group_table($taskRows, false, false, $finrapOverridesEditable, 'finrapCostDetailTable'); ?>
                     </section>
                 <?php endif; ?>
 
@@ -1880,6 +1904,7 @@ $finrapPocPmHasOverride = $pocPmHasOverride;
                 let eacOverrides = Object.assign({}, <?= json_encode($finrapClientEacOverrides, JSON_FORCE_OBJECT) ?>);
                 let pocPm = <?= json_encode($pocPm, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
                 let pocPmHasOverride = <?= $finrapPocPmHasOverride ? 'true' : 'false' ?>;
+                const finrapOverridesEditable = <?= $finrapOverridesEditable ? 'true' : 'false' ?>;
 
                 const valueModal = document.getElementById('finrapValueModal');
                 const valueModalTitle = document.getElementById('finrapValueModalTitle');
@@ -2350,93 +2375,96 @@ $finrapPocPmHasOverride = $pocPmHasOverride;
                     });
                 }
 
-                if (pocPmButton)
+                if (finrapOverridesEditable)
                 {
-                    pocPmButton.addEventListener('click', function ()
+                    if (pocPmButton)
                     {
-                        openValueModal('poc_pm', '', pocPm);
-                    });
-                }
+                        pocPmButton.addEventListener('click', function ()
+                        {
+                            openValueModal('poc_pm', '', pocPm);
+                        });
+                    }
 
-                if (detailTable)
-                {
-                    detailTable.addEventListener('click', function (event)
+                    if (detailTable)
                     {
-                        const target = event.target;
-                        if (!(target instanceof Element))
+                        detailTable.addEventListener('click', function (event)
                         {
-                            return;
-                        }
-
-                        const button = target.closest('.finrap-eac-edit-btn');
-                        if (!(button instanceof HTMLButtonElement))
-                        {
-                            return;
-                        }
-
-                        const taskCode = String(button.dataset.taskCode || '').trim();
-                        if (taskCode === '')
-                        {
-                            return;
-                        }
-
-                        const rows = recalculateTaskRows();
-                        const taskRow = rows.find(function (row) { return row.code === taskCode; });
-                        const current = eacOverrideForTask(taskCode);
-                        const displayValue = current !== undefined
-                            ? current
-                            : (taskRow ? Number(taskRow.budget_cost || 0) : 0);
-                        openValueModal('eac', taskCode, displayValue);
-                    });
-                }
-
-                if (valueModalCancel)
-                {
-                    valueModalCancel.addEventListener('click', closeValueModal);
-                }
-
-                if (valueModal)
-                {
-                    valueModal.addEventListener('click', function (event)
-                    {
-                        if (event.target === valueModal)
-                        {
-                            closeValueModal();
-                        }
-                    });
-                }
-
-                if (valueModalSave)
-                {
-                    valueModalSave.addEventListener('click', function ()
-                    {
-                        const parsed = parseNumberInput(valueModalInput ? valueModalInput.value : '');
-                        if (parsed === null)
-                        {
-                            return;
-                        }
-
-                        const saveKind = modalKind;
-                        const saveTaskCode = modalTaskCode;
-
-                        if (saveKind === 'poc_pm')
-                        {
-                            pocPm = parsed;
-                            pocPmHasOverride = true;
-                            if (pocPmButton)
+                            const target = event.target;
+                            if (!(target instanceof Element))
                             {
-                                pocPmButton.textContent = formatPercent(pocPm);
+                                return;
                             }
-                        }
-                        else if (saveKind === 'eac' && saveTaskCode !== '')
-                        {
-                            eacOverrides[saveTaskCode] = parsed;
-                        }
 
-                        closeValueModal();
-                        renderCalculatedState();
-                        saveOverrides().catch(function () { return null; });
-                    });
+                            const button = target.closest('.finrap-eac-edit-btn');
+                            if (!(button instanceof HTMLButtonElement))
+                            {
+                                return;
+                            }
+
+                            const taskCode = String(button.dataset.taskCode || '').trim();
+                            if (taskCode === '')
+                            {
+                                return;
+                            }
+
+                            const rows = recalculateTaskRows();
+                            const taskRow = rows.find(function (row) { return row.code === taskCode; });
+                            const current = eacOverrideForTask(taskCode);
+                            const displayValue = current !== undefined
+                                ? current
+                                : (taskRow ? Number(taskRow.budget_cost || 0) : 0);
+                            openValueModal('eac', taskCode, displayValue);
+                        });
+                    }
+
+                    if (valueModalCancel)
+                    {
+                        valueModalCancel.addEventListener('click', closeValueModal);
+                    }
+
+                    if (valueModal)
+                    {
+                        valueModal.addEventListener('click', function (event)
+                        {
+                            if (event.target === valueModal)
+                            {
+                                closeValueModal();
+                            }
+                        });
+                    }
+
+                    if (valueModalSave)
+                    {
+                        valueModalSave.addEventListener('click', function ()
+                        {
+                            const parsed = parseNumberInput(valueModalInput ? valueModalInput.value : '');
+                            if (parsed === null)
+                            {
+                                return;
+                            }
+
+                            const saveKind = modalKind;
+                            const saveTaskCode = modalTaskCode;
+
+                            if (saveKind === 'poc_pm')
+                            {
+                                pocPm = parsed;
+                                pocPmHasOverride = true;
+                                if (pocPmButton)
+                                {
+                                    pocPmButton.textContent = formatPercent(pocPm);
+                                }
+                            }
+                            else if (saveKind === 'eac' && saveTaskCode !== '')
+                            {
+                                eacOverrides[saveTaskCode] = parsed;
+                            }
+
+                            closeValueModal();
+                            renderCalculatedState();
+                            saveOverrides().catch(function () { return null; });
+                        });
+                    }
                 }
 
                 renderCalculatedState();
