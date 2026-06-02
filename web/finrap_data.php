@@ -75,6 +75,73 @@ function finrap_report_cache_path(string $company, string $projectNo, string $re
     return finrap_cache_dir() . DIRECTORY_SEPARATOR . $safeCompany . '_' . $safeProject . '_ts_' . $safeReportId . '.json';
 }
 
+function finrap_report_overrides_path(string $company, string $projectNo, string $reportId): string
+{
+    $reportPath = finrap_report_cache_path($company, $projectNo, $reportId);
+    $overridePath = preg_replace('/\.json$/', '-overrides.json', $reportPath);
+
+    return is_string($overridePath) && $overridePath !== '' ? $overridePath : $reportPath . '-overrides.json';
+}
+
+function finrap_load_report_overrides(string $company, string $projectNo, string $reportId): array
+{
+    $path = finrap_report_overrides_path($company, $projectNo, $reportId);
+    if (!is_file($path)) {
+        return [];
+    }
+
+    $raw = @file_get_contents($path);
+    if (!is_string($raw) || trim($raw) === '') {
+        return [];
+    }
+
+    $decoded = json_decode($raw, true);
+
+    return is_array($decoded) ? $decoded : [];
+}
+
+function finrap_save_report_overrides(string $company, string $projectNo, string $reportId, array $overrides): bool
+{
+    $path = finrap_report_overrides_path($company, $projectNo, $reportId);
+    $eacByTask = is_array($overrides['eac_by_task'] ?? null) ? $overrides['eac_by_task'] : [];
+
+    $payload = [
+        'eac_by_task' => (object) $eacByTask,
+        'updated_at' => gmdate('c'),
+    ];
+
+    if (array_key_exists('poc_pm', $overrides)) {
+        $payload['poc_pm'] = $overrides['poc_pm'];
+    }
+
+    $json = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
+    if (!is_string($json)) {
+        return false;
+    }
+
+    return file_put_contents($path, $json, LOCK_EX) !== false;
+}
+
+function finrap_delete_report_overrides(string $company, string $projectNo, string $reportId): bool
+{
+    $path = finrap_report_overrides_path($company, $projectNo, $reportId);
+    if (!is_file($path)) {
+        return true;
+    }
+
+    return @unlink($path);
+}
+
+function finrap_calculate_poc_percent(float $bookedCost, float $eac): float
+{
+    $epsilon = 0.000001;
+    if (abs($eac) < $epsilon) {
+        return 0.0;
+    }
+
+    return ($bookedCost / $eac) * 100.0;
+}
+
 function finrap_load(string $company, string $projectNo, string $yearMonth): ?array
 {
     $path = finrap_cache_path($company, $projectNo, $yearMonth);
@@ -148,7 +215,12 @@ function finrap_delete_report_snapshot(string $company, string $projectNo, strin
         return false;
     }
 
-    return @unlink($path);
+    $deleted = @unlink($path);
+    if ($deleted) {
+        finrap_delete_report_overrides($company, $projectNo, $reportId);
+    }
+
+    return $deleted;
 }
 
 function finrap_list_report_snapshots(string $company, string $projectNo): array
@@ -165,7 +237,7 @@ function finrap_list_report_snapshots(string $company, string $projectNo): array
 
     $result = [];
     foreach ($entries as $entry) {
-        if (!str_starts_with($entry, $prefix) || !str_ends_with($entry, '.json')) {
+        if (!str_starts_with($entry, $prefix) || !str_ends_with($entry, '.json') || str_ends_with($entry, '-overrides.json')) {
             continue;
         }
 
@@ -474,7 +546,7 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
 
     try {
         $contractUrl = finrap_company_entity_url_with_query($baseUrl, $environment, $company, 'FactureerbareProjectPlanningsRegels', [
-            '$select' => 'Job_No,Line_No,Line_Type,Description,Line_Amount_LCY,Planning_Date,Invoiced_Amount_LCY,LVS_Document_Status',
+            '$select' => 'Job_No,Line_No,Line_Type,Description,Document_No,Line_Amount_LCY,Planning_Date,Invoiced_Amount_LCY,LVS_Document_Status',
             '$filter' => $projectFilter,
         ]);
         $contractRows = odata_get_all($contractUrl, $auth, $ttl);
@@ -502,7 +574,8 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
 
         $termijnLines[] = [
             'line_no' => (int) ($contractRow['Line_No'] ?? 0),
-            'description' => (string) ($contractRow['Description'] ?? ''),
+            'document_no' => trim((string) ($contractRow['Document_No'] ?? '')),
+            'description' => trim((string) ($contractRow['Description'] ?? '')),
             'amount' => finance_to_float($contractRow['Line_Amount_LCY'] ?? 0.0),
             'planning_date' => (string) ($contractRow['Planning_Date'] ?? ''),
             'invoiced_amount' => finance_to_float($contractRow['Invoiced_Amount_LCY'] ?? 0.0),
@@ -763,24 +836,6 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
         $obligationTotal = finance_add_amount($obligationTotal, finance_to_float($taskRow['Entered_Obligations'] ?? 0.0));
     }
 
-    $globalTotalRow = null;
-    foreach ($taskRowsByKey as $taskRow) {
-        if (!is_array($taskRow)) {
-            continue;
-        }
-
-        if (!(bool) ($taskRow['Is_Total_Row'] ?? false)) {
-            continue;
-        }
-
-        if (strcasecmp((string) ($taskRow['Cost_Group_Code'] ?? ''), FINRAP_GLOBAL_TOTAL_TASK_NO) !== 0) {
-            continue;
-        }
-
-        $globalTotalRow = $taskRow;
-        break;
-    }
-
     $displayTaskRows = [];
     foreach ($taskRowsByKey as $taskRow) {
         if (!is_array($taskRow)) {
@@ -795,23 +850,23 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
         }
     }
 
-    if (is_array($globalTotalRow)) {
-        unset($globalTotalRow['Is_Display_Row']);
-    }
+    $displayTaskRows = finrap_finalize_task_row_metrics($displayTaskRows);
 
-    $modal['budget_cost_total'] = $budgetTotal;
+    $aggregatedTotals = finrap_aggregate_detail_task_rows($displayTaskRows);
+
+    $modal['budget_cost_total'] = $aggregatedTotals['Budget_Cost'];
     $modal['task_rows'] = $displayTaskRows;
     $modal['task_rows_total'] = [
         'Cost_Group_Code' => 'TOTAL',
         'Cost_Group_Description' => 'Totaal alle regels',
-        'Budget_Cost' => $budgetTotal,
-        'EAC' => $eacTotal,
-        'Booked_Cost' => $bookedTotal,
-        'Entered_Obligations' => $obligationTotal,
-        'Variance_Budget_EAC' => finance_calculate_result($budgetTotal, $eacTotal),
+        'Budget_Cost' => $aggregatedTotals['Budget_Cost'],
+        'EAC' => $aggregatedTotals['EAC'],
+        'Booked_Cost' => $aggregatedTotals['Booked_Cost'],
+        'Entered_Obligations' => $aggregatedTotals['Entered_Obligations'],
+        'Variance_Budget_EAC' => $aggregatedTotals['Variance_Budget_EAC'],
         'Is_Total_Row' => true,
     ];
-    $modal['task_rows_global_total'] = is_array($globalTotalRow) ? $globalTotalRow : $modal['task_rows_total'];
+    $modal['task_rows_global_total'] = $modal['task_rows_total'];
 
     return $modal;
 }
@@ -868,4 +923,205 @@ function finrap_generate_month_for_project(string $company, string $projectNo, s
         ],
         'project_modal' => $modal,
     ];
+}
+
+function finrap_userdata_path(string $userEmail): ?string
+{
+    $email = strtolower(trim($userEmail));
+    if ($email === '') {
+        return null;
+    }
+
+    $hash = sha1($email);
+    $dir = __DIR__ . DIRECTORY_SEPARATOR . 'cache' . DIRECTORY_SEPARATOR . 'userdata';
+    if (!is_dir($dir)) {
+        @mkdir($dir, 0777, true);
+    }
+
+    return $dir . DIRECTORY_SEPARATOR . $hash . '.json';
+}
+
+function finrap_load_user_settings(string $userEmail): array
+{
+    $path = finrap_userdata_path($userEmail);
+    if (!is_string($path) || $path === '' || !is_file($path)) {
+        return [];
+    }
+
+    $raw = @file_get_contents($path);
+    if (!is_string($raw) || trim($raw) === '') {
+        return [];
+    }
+
+    $decoded = json_decode($raw, true);
+    return is_array($decoded) ? $decoded : [];
+}
+
+function finrap_save_user_settings(string $userEmail, array $settings): bool
+{
+    $path = finrap_userdata_path($userEmail);
+    if (!is_string($path) || $path === '') {
+        return false;
+    }
+
+    $settings['updated_at'] = gmdate('c');
+    $json = json_encode($settings, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
+    if (!is_string($json)) {
+        return false;
+    }
+
+    return file_put_contents($path, $json, LOCK_EX) !== false;
+}
+
+function finrap_project_overrides_settings_key(string $company, string $projectNo): string
+{
+    return 'finrap_overrides_' . sha1(strtolower(trim($company)) . '|' . strtolower(trim($projectNo)));
+}
+
+function finrap_load_project_overrides(string $userEmail, string $company, string $projectNo): array
+{
+    $settings = finrap_load_user_settings($userEmail);
+    $key = finrap_project_overrides_settings_key($company, $projectNo);
+    $stored = $settings[$key] ?? null;
+
+    return is_array($stored) ? $stored : [];
+}
+
+function finrap_save_project_overrides(string $userEmail, string $company, string $projectNo, array $overrides): bool
+{
+    $settings = finrap_load_user_settings($userEmail);
+    $key = finrap_project_overrides_settings_key($company, $projectNo);
+    $settings[$key] = $overrides;
+
+    return finrap_save_user_settings($userEmail, $settings);
+}
+
+function finrap_is_detail_task_row(array $taskRow): bool
+{
+    return !(bool) ($taskRow['Is_Total_Row'] ?? false);
+}
+
+function finrap_aggregate_detail_task_rows(array $taskRows): array
+{
+    $budgetTotal = 0.0;
+    $eacTotal = 0.0;
+    $bookedTotal = 0.0;
+    $obligationTotal = 0.0;
+
+    foreach ($taskRows as $taskRow) {
+        if (!is_array($taskRow) || !finrap_is_detail_task_row($taskRow)) {
+            continue;
+        }
+
+        $budgetTotal = finance_add_amount($budgetTotal, finance_to_float($taskRow['Budget_Cost'] ?? 0.0));
+        $eacTotal = finance_add_amount($eacTotal, finance_to_float($taskRow['EAC'] ?? 0.0));
+        $bookedTotal = finance_add_amount($bookedTotal, finance_to_float($taskRow['Booked_Cost'] ?? 0.0));
+        $obligationTotal = finance_add_amount($obligationTotal, finance_to_float($taskRow['Entered_Obligations'] ?? 0.0));
+    }
+
+    return [
+        'Budget_Cost' => $budgetTotal,
+        'EAC' => $eacTotal,
+        'Booked_Cost' => $bookedTotal,
+        'Entered_Obligations' => $obligationTotal,
+        'Variance_Budget_EAC' => finance_calculate_result($budgetTotal, $eacTotal),
+    ];
+}
+
+function finrap_recalculate_task_row_variances(array &$taskRows): void
+{
+    foreach ($taskRows as &$taskRow) {
+        if (!is_array($taskRow)) {
+            continue;
+        }
+
+        $taskRow['Variance_Budget_EAC'] = finance_calculate_result(
+            finance_to_float($taskRow['Budget_Cost'] ?? 0.0),
+            finance_to_float($taskRow['EAC'] ?? 0.0)
+        );
+    }
+    unset($taskRow);
+}
+
+function finrap_rollup_total_row_metrics(array &$taskRows): void
+{
+    foreach ($taskRows as &$taskRow) {
+        if (!is_array($taskRow) || !(bool) ($taskRow['Is_Total_Row'] ?? false)) {
+            continue;
+        }
+
+        $range = finrap_parse_totaling_range((string) ($taskRow['Totaling'] ?? ''));
+        if ($range === null) {
+            continue;
+        }
+
+        $budgetTotal = 0.0;
+        $eacTotal = 0.0;
+        $bookedTotal = 0.0;
+        $obligationTotal = 0.0;
+
+        foreach ($taskRows as $detailRow) {
+            if (!is_array($detailRow) || (bool) ($detailRow['Is_Total_Row'] ?? false)) {
+                continue;
+            }
+
+            $detailCode = (string) ($detailRow['Cost_Group_Code'] ?? '');
+            if (!finrap_task_no_in_range($detailCode, $range)) {
+                continue;
+            }
+
+            $budgetTotal = finance_add_amount($budgetTotal, finance_to_float($detailRow['Budget_Cost'] ?? 0.0));
+            $eacTotal = finance_add_amount($eacTotal, finance_to_float($detailRow['EAC'] ?? 0.0));
+            $bookedTotal = finance_add_amount($bookedTotal, finance_to_float($detailRow['Booked_Cost'] ?? 0.0));
+            $obligationTotal = finance_add_amount($obligationTotal, finance_to_float($detailRow['Entered_Obligations'] ?? 0.0));
+        }
+
+        $taskRow['Budget_Cost'] = $budgetTotal;
+        $taskRow['EAC'] = $eacTotal;
+        $taskRow['Booked_Cost'] = $bookedTotal;
+        $taskRow['Entered_Obligations'] = $obligationTotal;
+    }
+    unset($taskRow);
+
+    finrap_recalculate_task_row_variances($taskRows);
+}
+
+function finrap_finalize_task_row_metrics(array $taskRows): array
+{
+    finrap_rollup_total_row_metrics($taskRows);
+
+    return $taskRows;
+}
+
+function finrap_get_report_summary_totals(array $taskRows): array
+{
+    return finrap_aggregate_detail_task_rows($taskRows);
+}
+
+function finrap_apply_eac_overrides_to_task_rows(array $taskRows, array $eacByTask): array
+{
+    $normalizedOverrides = [];
+    foreach ($eacByTask as $taskCode => $amount) {
+        $code = trim((string) $taskCode);
+        if ($code === '') {
+            continue;
+        }
+
+        $normalizedOverrides[strtolower($code)] = finance_to_float($amount);
+    }
+
+    foreach ($taskRows as &$taskRow) {
+        if (!is_array($taskRow) || (bool) ($taskRow['Is_Total_Row'] ?? false)) {
+            continue;
+        }
+
+        $taskCode = trim((string) ($taskRow['Cost_Group_Code'] ?? ''));
+        $overrideKey = strtolower($taskCode);
+        if ($taskCode !== '' && array_key_exists($overrideKey, $normalizedOverrides)) {
+            $taskRow['EAC'] = $normalizedOverrides[$overrideKey];
+        }
+    }
+    unset($taskRow);
+
+    return finrap_finalize_task_row_metrics($taskRows);
 }
