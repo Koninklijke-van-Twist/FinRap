@@ -754,7 +754,7 @@ function localizationJsTranslations(array $keys): string
 {
     $payload = [];
     foreach ($keys as $key) {
-        $payload[$key] = __($key);
+        $payload[$key] = LOC($key);
     }
 
     return json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
@@ -847,7 +847,7 @@ CSS;
 function renderLanguageSwitcher(): void
 {
     $current = getCurrentLanguage();
-    $menuAria = htmlspecialchars(__('lang.menu_aria'), ENT_QUOTES);
+    $menuAria = htmlspecialchars(LOC('lang.menu_aria'), ENT_QUOTES);
 
     echo '<div class="lang-switcher" data-lang-switcher>';
     echo '<button type="button" class="lang-switcher-toggle" aria-haspopup="true" aria-expanded="false" aria-label="' . $menuAria . '">';
@@ -862,7 +862,7 @@ function renderLanguageSwitcher(): void
 
         $label = (string) ($meta['label'] ?? $code);
         $href = htmlspecialchars(localizationUrlWithLang($code), ENT_QUOTES);
-        $title = htmlspecialchars(__('lang.switch_to', $label), ENT_QUOTES);
+        $title = htmlspecialchars(LOC('lang.switch_to', $label), ENT_QUOTES);
 
         echo '<li class="lang-switcher-item" role="none">';
         echo '<a role="menuitem" href="' . $href . '" title="' . $title . '">';
@@ -911,6 +911,10 @@ JS;
  * Page load
  */
 
+if (session_status() !== PHP_SESSION_ACTIVE) {
+    @session_start();
+}
+
 if (!isset($_SESSION['lang'])) {
     $prefEmail = strtolower(trim((string) ($_SESSION['user']['email'] ?? '')));
     if ($prefEmail !== '') {
@@ -926,10 +930,12 @@ if (!isset($_SESSION['lang']) || !array_key_exists((string) $_SESSION['lang'], S
 }
 
 if (isset($_GET['lang']) && array_key_exists($_GET['lang'], SUPPORTED_LANGUAGES)) {
-    $_SESSION['lang'] = $_GET['lang'];
+    $requestedLang = (string) $_GET['lang'];
+    $langChanged = $requestedLang !== getCurrentLanguage();
+    $_SESSION['lang'] = $requestedLang;
     $prefEmail = strtolower(trim((string) ($_SESSION['user']['email'] ?? '')));
-    if ($prefEmail !== '') {
-        saveUserPref($prefEmail, 'lang', $_GET['lang']);
+    if ($prefEmail !== '' && $langChanged) {
+        saveUserPref($prefEmail, 'lang', $requestedLang);
     }
 
     $isApiAction = isset($_GET['action']) && trim((string) $_GET['action']) !== '';
@@ -941,4 +947,8 @@ if (isset($_GET['lang']) && array_key_exists($_GET['lang'], SUPPORTED_LANGUAGES)
         header('Location: ' . $path . ($query !== '' ? '?' . $query : ''));
         exit;
     }
+}
+
+if (session_status() === PHP_SESSION_ACTIVE) {
+    session_write_close();
 }

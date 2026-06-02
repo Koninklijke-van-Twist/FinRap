@@ -24,7 +24,85 @@ function index_json_response(array $payload, int $statusCode = 200): void
 	exit;
 }
 
-function index_discover_companies(): array
+function index_default_companies(): array
+{
+	return [
+		'Koninklijke van Twist',
+		'Hunter van Twist',
+		'KVT Gas',
+	];
+}
+
+function index_companies_cache_path(): string
+{
+	return __DIR__ . DIRECTORY_SEPARATOR . 'cache' . DIRECTORY_SEPARATOR . 'index_companies.json';
+}
+
+function index_read_companies_cache(): ?array
+{
+	$path = index_companies_cache_path();
+	if (!is_file($path)) {
+		return null;
+	}
+
+	$raw = @file_get_contents($path);
+	if (!is_string($raw) || trim($raw) === '') {
+		return null;
+	}
+
+	$decoded = json_decode($raw, true);
+	if (!is_array($decoded)) {
+		return null;
+	}
+
+	$companies = is_array($decoded['companies'] ?? null) ? $decoded['companies'] : [];
+	$normalized = [];
+	foreach ($companies as $company) {
+		$name = trim((string) $company);
+		if ($name !== '') {
+			$normalized[] = $name;
+		}
+	}
+
+	if ($normalized === []) {
+		return null;
+	}
+
+	return [
+		'companies' => array_values(array_unique($normalized)),
+		'cached_at' => (int) ($decoded['cached_at'] ?? 0),
+	];
+}
+
+function index_write_companies_cache(array $companies): array
+{
+	$normalized = [];
+	foreach ($companies as $company) {
+		$name = trim((string) $company);
+		if ($name !== '') {
+			$normalized[] = $name;
+		}
+	}
+
+	$normalized = array_values(array_unique($normalized));
+	if ($normalized === []) {
+		return index_default_companies();
+	}
+
+	$dir = dirname(index_companies_cache_path());
+	if (!is_dir($dir)) {
+		@mkdir($dir, 0777, true);
+	}
+
+	@file_put_contents(index_companies_cache_path(), json_encode([
+		'companies' => $normalized,
+		'cached_at' => time(),
+	], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT), LOCK_EX);
+
+	return $normalized;
+}
+
+function index_discover_companies_live(): array
 {
 	try {
 		$result = auth_discover_companies_across_active_environments(300);
@@ -34,14 +112,26 @@ function index_discover_companies(): array
 	}
 
 	if ($companies === []) {
-		$companies = [
-			'Koninklijke van Twist',
-			'Hunter van Twist',
-			'KVT Gas',
-		];
+		return index_companies_for_page();
 	}
 
-	return $companies;
+	return index_write_companies_cache($companies);
+}
+
+function index_companies_for_page(): array
+{
+	$cached = index_read_companies_cache();
+	if (is_array($cached['companies'] ?? null) && $cached['companies'] !== []) {
+		return $cached['companies'];
+	}
+
+	return index_default_companies();
+}
+
+/** @deprecated Use index_companies_for_page() or index_discover_companies_live(). */
+function index_discover_companies(): array
+{
+	return index_companies_for_page();
 }
 
 function index_month_label(string $yearMonth): string
@@ -62,7 +152,7 @@ function index_month_label(string $yearMonth): string
 	];
 
 	[$year, $month] = explode('-', $yearMonth);
-	return __($monthKey = 'month.' . $month) . ' ' . $year;
+	return LOC($monthKey = 'month.' . $month) . ' ' . $year;
 }
 
 function index_get_user_email(): string
@@ -204,7 +294,17 @@ function index_add_recent_project(array $settings, string $company, string $proj
 /**
  * Page load
  */
-$companies = index_discover_companies();
+$requestAction = trim((string) ($_GET['action'] ?? ''));
+
+if ($requestAction === 'discover_companies') {
+	$companies = index_discover_companies_live();
+	index_json_response([
+		'ok' => true,
+		'companies' => $companies,
+	]);
+}
+
+$companies = index_companies_for_page();
 $userEmail = index_get_user_email();
 $userSettings = index_load_user_settings($userEmail);
 $defaultCompany = is_array($userSettings) ? (string) ($userSettings['finrap_selected_company'] ?? '') : '';
@@ -220,14 +320,14 @@ $recentProjects = index_normalize_recent_projects(
 if (($_GET['action'] ?? '') === 'save_company_preference') {
 	$company = trim((string) ($_POST['company'] ?? ''));
 	if ($company === '' || !in_array($company, $companies, true)) {
-		index_json_response(['ok' => false, 'error' => __('error.company_invalid')], 400);
+		index_json_response(['ok' => false, 'error' => LOC('error.company_invalid')], 400);
 	}
 
 	$settings = index_load_user_settings($userEmail);
 	$settings['finrap_selected_company'] = $company;
 	$saveOk = index_save_user_settings($userEmail, $settings);
 	if (!$saveOk) {
-		index_json_response(['ok' => false, 'error' => __('error.save_preference_failed')], 500);
+		index_json_response(['ok' => false, 'error' => LOC('error.save_preference_failed')], 500);
 	}
 
 	index_json_response([
@@ -241,16 +341,16 @@ if (($_GET['action'] ?? '') === 'find_project') {
 	$projectNo = trim((string) ($_POST['project_no'] ?? ''));
 
 	if ($company === '' || !in_array($company, $companies, true)) {
-		index_json_response(['ok' => false, 'error' => __('error.company_invalid')], 400);
+		index_json_response(['ok' => false, 'error' => LOC('error.company_invalid')], 400);
 	}
 	if ($projectNo === '') {
-		index_json_response(['ok' => false, 'error' => __('error.project_no_required')], 400);
+		index_json_response(['ok' => false, 'error' => LOC('error.project_no_required')], 400);
 	}
 
 	try {
 		$project = finrap_fetch_project($company, $projectNo, 300);
 		if (!is_array($project)) {
-			index_json_response(['ok' => false, 'error' => __('error.project_not_found')], 404);
+			index_json_response(['ok' => false, 'error' => LOC('error.project_not_found')], 404);
 		}
 
 		$resolvedProjectNo = (string) ($project['No'] ?? $projectNo);
@@ -269,7 +369,7 @@ if (($_GET['action'] ?? '') === 'find_project') {
 			'recent_projects' => $recentProjectsPayload,
 		]);
 	} catch (Throwable $error) {
-		index_json_response(['ok' => false, 'error' => __('error.find_project_failed', $error->getMessage())], 500);
+		index_json_response(['ok' => false, 'error' => LOC('error.find_project_failed', $error->getMessage())], 500);
 	}
 }
 
@@ -277,7 +377,7 @@ if (($_GET['action'] ?? '') === 'list_reports') {
 	$company = trim((string) ($_POST['company'] ?? ''));
 	$projectNo = trim((string) ($_POST['project_no'] ?? ''));
 	if ($company === '' || !in_array($company, $companies, true) || $projectNo === '') {
-		index_json_response(['ok' => false, 'error' => __('error.invalid_input')], 400);
+		index_json_response(['ok' => false, 'error' => LOC('error.invalid_input')], 400);
 	}
 
 	index_json_response([
@@ -291,10 +391,10 @@ if (($_GET['action'] ?? '') === 'generate_report') {
 	$projectNo = trim((string) ($_POST['project_no'] ?? ''));
 
 	if ($company === '' || !in_array($company, $companies, true)) {
-		index_json_response(['ok' => false, 'error' => __('error.company_invalid')], 400);
+		index_json_response(['ok' => false, 'error' => LOC('error.company_invalid')], 400);
 	}
 	if ($projectNo === '') {
-		index_json_response(['ok' => false, 'error' => __('error.project_no_missing')], 400);
+		index_json_response(['ok' => false, 'error' => LOC('error.project_no_missing')], 400);
 	}
 
 	try {
@@ -303,7 +403,7 @@ if (($_GET['action'] ?? '') === 'generate_report') {
 		$resolvedProjectNo = (string) ($report['project_no'] ?? $projectNo);
 		$reportId = finrap_save_report_snapshot($company, $resolvedProjectNo, $report);
 		if (!is_string($reportId) || $reportId === '') {
-			index_json_response(['ok' => false, 'error' => __('error.save_report_failed')], 500);
+			index_json_response(['ok' => false, 'error' => LOC('error.save_report_failed')], 500);
 		}
 
 		$reportLang = rawurlencode(getCurrentLanguage());
@@ -315,7 +415,7 @@ if (($_GET['action'] ?? '') === 'generate_report') {
 			'report_url' => 'finrap.php?company=' . rawurlencode($company) . '&project_no=' . rawurlencode($resolvedProjectNo) . '&report_id=' . rawurlencode($reportId) . '&lang=' . $reportLang,
 		]);
 	} catch (Throwable $error) {
-		index_json_response(['ok' => false, 'error' => __('error.generate_failed', $error->getMessage())], 500);
+		index_json_response(['ok' => false, 'error' => LOC('error.generate_failed', $error->getMessage())], 500);
 	}
 }
 
@@ -325,12 +425,12 @@ if (($_GET['action'] ?? '') === 'delete_report') {
 	$reportId = trim((string) ($_POST['report_id'] ?? ''));
 
 	if ($company === '' || !in_array($company, $companies, true) || $projectNo === '' || $reportId === '') {
-		index_json_response(['ok' => false, 'error' => __('error.invalid_input')], 400);
+		index_json_response(['ok' => false, 'error' => LOC('error.invalid_input')], 400);
 	}
 
 	$deleted = finrap_delete_report_snapshot($company, $projectNo, $reportId);
 	if (!$deleted) {
-		index_json_response(['ok' => false, 'error' => __('error.delete_report_failed')], 404);
+		index_json_response(['ok' => false, 'error' => LOC('error.delete_report_failed')], 404);
 	}
 
 	index_json_response([
@@ -392,7 +492,7 @@ $indexI18nKeys = [
 	<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
 	<link rel="manifest" href="site.webmanifest">
 	<link rel="stylesheet" href="brand.css">
-	<title><?= htmlspecialchars(__('app.title'), ENT_QUOTES) ?></title>
+	<title><?= htmlspecialchars(LOC('app.title'), ENT_QUOTES) ?></title>
 	<?php renderLanguageSwitcherStyles(); ?>
 	<style>
 		:root {
@@ -946,15 +1046,15 @@ $indexI18nKeys = [
 	<div class="wrap">
 		<section class="hero">
 			<img src="logo-website.png" alt="KVT logo">
-			<h1><?= htmlspecialchars(__('index.hero.title'), ENT_QUOTES) ?></h1>
-			<p><?= htmlspecialchars(__('index.hero.subtitle'), ENT_QUOTES) ?></p>
+			<h1><?= htmlspecialchars(LOC('index.hero.title'), ENT_QUOTES) ?></h1>
+			<p><?= htmlspecialchars(LOC('index.hero.subtitle'), ENT_QUOTES) ?></p>
 		</section>
 
 		<div class="workspace-grid">
 			<section class="panel">
 				<div class="grid">
 					<div>
-						<label for="companySelect"><?= htmlspecialchars(__('index.label.company'), ENT_QUOTES) ?></label>
+						<label for="companySelect"><?= htmlspecialchars(LOC('index.label.company'), ENT_QUOTES) ?></label>
 						<select id="companySelect">
 							<?php foreach ($companies as $company): ?>
 								<option value="<?= htmlspecialchars($company, ENT_QUOTES) ?>" <?= $company === $selectedCompany ? 'selected' : '' ?>>
@@ -964,19 +1064,19 @@ $indexI18nKeys = [
 						</select>
 					</div>
 					<div>
-						<label for="projectInput"><?= htmlspecialchars(__('index.label.project_no'), ENT_QUOTES) ?></label>
-						<input id="projectInput" type="text" autocomplete="off" placeholder="<?= htmlspecialchars(__('index.placeholder.project_no'), ENT_QUOTES) ?>">
+						<label for="projectInput"><?= htmlspecialchars(LOC('index.label.project_no'), ENT_QUOTES) ?></label>
+						<input id="projectInput" type="text" autocomplete="off" placeholder="<?= htmlspecialchars(LOC('index.placeholder.project_no'), ENT_QUOTES) ?>">
 					</div>
 				</div>
 				<div class="row-actions">
-					<button id="findBtn" class="btn btn-main" type="button"><?= htmlspecialchars(__('index.btn.find'), ENT_QUOTES) ?></button>
+					<button id="findBtn" class="btn btn-main" type="button"><?= htmlspecialchars(LOC('index.btn.find'), ENT_QUOTES) ?></button>
 				</div>
-				<p id="statusLine" class="status"><?= htmlspecialchars(__('index.status.none'), ENT_QUOTES) ?></p>
+				<p id="statusLine" class="status"><?= htmlspecialchars(LOC('index.status.none'), ENT_QUOTES) ?></p>
 				<div id="projectArea"></div>
 			</section>
 
 			<aside class="panel sidebar-panel">
-				<h2 class="panel-title"><?= htmlspecialchars(__('index.recent.title'), ENT_QUOTES) ?></h2>
+				<h2 class="panel-title"><?= htmlspecialchars(LOC('index.recent.title'), ENT_QUOTES) ?></h2>
 				<ul id="recentProjectsList" class="recent-project-list"></ul>
 			</aside>
 		</div>
@@ -984,10 +1084,10 @@ $indexI18nKeys = [
 
 	<div id="finrapLoader" class="loader-overlay" aria-live="polite" aria-busy="true">
 		<div class="loader-card">
-			<h2 id="loaderTitle" class="loader-title"><?= htmlspecialchars(__('index.loader.finrap'), ENT_QUOTES) ?></h2>
-			<p id="loaderSubtitle" class="loader-subtitle"><?= htmlspecialchars(__('index.loader.wait'), ENT_QUOTES) ?></p>
+			<h2 id="loaderTitle" class="loader-title"><?= htmlspecialchars(LOC('index.loader.finrap'), ENT_QUOTES) ?></h2>
+			<p id="loaderSubtitle" class="loader-subtitle"><?= htmlspecialchars(LOC('index.loader.wait'), ENT_QUOTES) ?></p>
 			<ul id="loaderSteps" class="loader-steps"></ul>
-			<p id="loaderLive" class="loader-live"><?= htmlspecialchars(__('index.loader.prepare'), ENT_QUOTES) ?></p>
+			<p id="loaderLive" class="loader-live"><?= htmlspecialchars(LOC('index.loader.prepare'), ENT_QUOTES) ?></p>
 		</div>
 	</div>
 
@@ -995,13 +1095,13 @@ $indexI18nKeys = [
 		aria-labelledby="finrapModalTitle">
 		<div class="finrap-modal-dialog">
 			<div class="finrap-modal-head">
-				<h2 id="finrapModalTitle" class="finrap-modal-title"><?= htmlspecialchars(__('index.modal.title'), ENT_QUOTES) ?></h2>
+				<h2 id="finrapModalTitle" class="finrap-modal-title"><?= htmlspecialchars(LOC('index.modal.title'), ENT_QUOTES) ?></h2>
 				<div class="finrap-modal-actions">
-					<button id="finrapModalPrint" class="btn btn-print" type="button"><?= htmlspecialchars(__('index.modal.print'), ENT_QUOTES) ?></button>
-					<button id="finrapModalClose" class="btn btn-main" type="button"><?= htmlspecialchars(__('index.modal.close'), ENT_QUOTES) ?></button>
+					<button id="finrapModalPrint" class="btn btn-print" type="button"><?= htmlspecialchars(LOC('index.modal.print'), ENT_QUOTES) ?></button>
+					<button id="finrapModalClose" class="btn btn-main" type="button"><?= htmlspecialchars(LOC('index.modal.close'), ENT_QUOTES) ?></button>
 				</div>
 			</div>
-			<iframe id="finrapModalFrame" class="finrap-modal-frame" title="<?= htmlspecialchars(__('index.modal.report_iframe'), ENT_QUOTES) ?>"></iframe>
+			<iframe id="finrapModalFrame" class="finrap-modal-frame" title="<?= htmlspecialchars(LOC('index.modal.report_iframe'), ENT_QUOTES) ?>"></iframe>
 		</div>
 	</div>
 
@@ -1009,10 +1109,10 @@ $indexI18nKeys = [
 		aria-labelledby="confirmDeleteStep1Title">
 		<div class="confirm-dialog">
 			<div id="confirmDeleteStep1Title" class="confirm-topbar is-red"></div>
-			<div class="confirm-body"><?= htmlspecialchars(__('index.delete.step1.body'), ENT_QUOTES) ?></div>
+			<div class="confirm-body"><?= htmlspecialchars(LOC('index.delete.step1.body'), ENT_QUOTES) ?></div>
 			<div class="confirm-actions">
-				<button id="confirmDeleteStep1No" class="btn btn-print" type="button"><?= htmlspecialchars(__('index.btn.no'), ENT_QUOTES) ?></button>
-				<button id="confirmDeleteStep1Yes" class="btn btn-main" type="button"><?= htmlspecialchars(__('index.btn.yes'), ENT_QUOTES) ?></button>
+				<button id="confirmDeleteStep1No" class="btn btn-print" type="button"><?= htmlspecialchars(LOC('index.btn.no'), ENT_QUOTES) ?></button>
+				<button id="confirmDeleteStep1Yes" class="btn btn-main" type="button"><?= htmlspecialchars(LOC('index.btn.yes'), ENT_QUOTES) ?></button>
 			</div>
 		</div>
 	</div>
@@ -1021,10 +1121,10 @@ $indexI18nKeys = [
 		aria-labelledby="confirmDeleteStep2Title">
 		<div class="confirm-dialog">
 			<div id="confirmDeleteStep2Title" class="confirm-topbar is-hazard"></div>
-			<div class="confirm-body"><?= htmlspecialchars(__('index.delete.step2.body'), ENT_QUOTES) ?></div>
+			<div class="confirm-body"><?= htmlspecialchars(LOC('index.delete.step2.body'), ENT_QUOTES) ?></div>
 			<div class="confirm-actions">
-				<button id="confirmDeleteStep2No" class="btn btn-print" type="button"><?= htmlspecialchars(__('index.btn.no'), ENT_QUOTES) ?></button>
-				<button id="confirmDeleteStep2Yes" class="btn btn-main" type="button"><?= htmlspecialchars(__('index.btn.yes'), ENT_QUOTES) ?></button>
+				<button id="confirmDeleteStep2No" class="btn btn-print" type="button"><?= htmlspecialchars(LOC('index.btn.no'), ENT_QUOTES) ?></button>
+				<button id="confirmDeleteStep2Yes" class="btn btn-main" type="button"><?= htmlspecialchars(LOC('index.btn.yes'), ENT_QUOTES) ?></button>
 			</div>
 		</div>
 	</div>
@@ -1239,6 +1339,51 @@ $indexI18nKeys = [
 				{
 					return null;
 				});
+			}
+
+			function renderCompanyOptions (companies, preferredCompany)
+			{
+				if (!companySelect || !Array.isArray(companies) || companies.length === 0)
+				{
+					return;
+				}
+
+				const currentValue = preferredCompany || companySelect.value;
+				companySelect.innerHTML = '';
+				companies.forEach(function (company)
+				{
+					const option = document.createElement('option');
+					option.value = company;
+					option.textContent = company;
+					if (company === currentValue)
+					{
+						option.selected = true;
+					}
+					companySelect.appendChild(option);
+				});
+
+				if (!Array.prototype.some.call(companySelect.options, function (opt) { return opt.selected; }))
+				{
+					companySelect.selectedIndex = 0;
+				}
+			}
+
+			function refreshCompaniesInBackground ()
+			{
+				postForm('index.php?action=discover_companies', {})
+					.then(function (json)
+					{
+						if (!json || !json.ok || !Array.isArray(json.companies) || json.companies.length === 0)
+						{
+							return;
+						}
+
+						renderCompanyOptions(json.companies, companySelect ? companySelect.value : '');
+					})
+					.catch(function ()
+					{
+						return null;
+					});
 			}
 
 			function formatRecentDate (value)
@@ -1630,6 +1775,7 @@ $indexI18nKeys = [
 
 			recentProjects = normalizeRecentProjects(recentProjects);
 			renderRecentProjects();
+			refreshCompaniesInBackground();
 
 			if (confirmDeleteStep1No)
 			{
