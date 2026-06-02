@@ -1119,6 +1119,8 @@ function finrap_apply_eac_overrides_to_task_rows(array $taskRows, array $eacByTa
         $overrideKey = strtolower($taskCode);
         if ($taskCode !== '' && array_key_exists($overrideKey, $normalizedOverrides)) {
             $taskRow['EAC'] = $normalizedOverrides[$overrideKey];
+        } else {
+            $taskRow['EAC'] = finance_to_float($taskRow['Budget_Cost'] ?? 0.0);
         }
     }
     unset($taskRow);

@@ -238,11 +238,9 @@ function finrap_render_cost_group_table(array $taskRows, bool $totalsOnly = fals
         if ($totalsOnly && !$isTotalRow) {
             continue;
         }
-        if ($totalsOnly && $hideAllZeroTotals && finrap_is_all_zero_totals_row($row)) {
-            continue;
-        }
 
         $taskCode = (string) ($row['Cost_Group_Code'] ?? '');
+        $hideAsAllZeroTotal = $totalsOnly && $hideAllZeroTotals && $isTotalRow && finrap_is_all_zero_totals_row($row);
         $descriptionValue = (string) ($row['Cost_Group_Description'] ?? '');
         if (preg_match('/^\d{3}-000-000$/', $taskCode) === 1 && $isTotalRow) {
             $descriptionValue = (string) ($row['Cost_Group_Description'] ?? '');
@@ -262,7 +260,13 @@ function finrap_render_cost_group_table(array $taskRows, bool $totalsOnly = fals
             }
         }
 
-        echo '<tr' . ($rowClass !== '' ? ' class="' . htmlspecialchars($rowClass) . '"' : '') . ' data-task-code="' . htmlspecialchars($taskCode) . '" data-is-total-row="' . ($isTotalRow ? '1' : '0') . '">';
+        if ($hideAsAllZeroTotal) {
+            $rowClass = trim($rowClass . ' is-zero-total-hidden');
+        }
+
+        $zeroHideAttr = ($totalsOnly && $hideAllZeroTotals && $isTotalRow) ? ' data-hide-if-all-zero="1"' : '';
+
+        echo '<tr' . ($rowClass !== '' ? ' class="' . htmlspecialchars($rowClass) . '"' : '') . ' data-task-code="' . htmlspecialchars($taskCode) . '" data-is-total-row="' . ($isTotalRow ? '1' : '0') . '"' . $zeroHideAttr . '>';
         foreach ($columns as $column) {
             $columnKey = (string) ($column['key'] ?? '');
             $isRight = (bool) ($column['is_right'] ?? false);
@@ -916,6 +920,10 @@ $finrapPocPmHasOverride = $pocPmHasOverride;
 
         .project-cost-group-table tbody tr.is-minor-total-row td {
             background: #eff6ff;
+        }
+
+        .project-cost-group-table tbody tr.is-zero-total-hidden {
+            display: none;
         }
 
         .project-metric-table tbody td.is-positive,
@@ -2036,6 +2044,10 @@ $finrapPocPmHasOverride = $pocPmHasOverride;
                         {
                             row.eac = Number(override);
                         }
+                        else
+                        {
+                            row.eac = Number(row.budget_cost || 0);
+                        }
                     });
 
                     rows.forEach(function (row)
@@ -2086,6 +2098,56 @@ $finrapPocPmHasOverride = $pocPmHasOverride;
                 function getReportSummaryTotals (rows)
                 {
                     return aggregateDetailRows(rows);
+                }
+
+                function isAllZeroTotalsRow (row)
+                {
+                    const epsilon = 0.000001;
+                    const values = [
+                        Number(row.budget_cost || 0),
+                        Number(row.eac || 0),
+                        Number(row.booked_cost || 0),
+                        Number(row.entered_obligations || 0),
+                        Number(row.variance_budget_eac || 0)
+                    ];
+
+                    return values.every(function (value)
+                    {
+                        return Math.abs(value) < epsilon;
+                    });
+                }
+
+                function updateTotalsTableRowVisibility (rows)
+                {
+                    if (!totalsTable)
+                    {
+                        return;
+                    }
+
+                    const rowByCode = {};
+                    rows.forEach(function (row)
+                    {
+                        rowByCode[row.code] = row;
+                    });
+
+                    totalsTable.querySelectorAll('tr[data-hide-if-all-zero="1"]').forEach(function (tableRow)
+                    {
+                        const taskCode = String(tableRow.dataset.taskCode || '');
+                        const calculatedRow = rowByCode[taskCode];
+                        if (!calculatedRow)
+                        {
+                            return;
+                        }
+
+                        if (isAllZeroTotalsRow(calculatedRow))
+                        {
+                            tableRow.classList.add('is-zero-total-hidden');
+                        }
+                        else
+                        {
+                            tableRow.classList.remove('is-zero-total-hidden');
+                        }
+                    });
                 }
 
                 function updateMetricCell (id, value)
@@ -2220,6 +2282,8 @@ $finrapPocPmHasOverride = $pocPmHasOverride;
                         updateTableCell(row.code, 'Entered_Obligations', row.entered_obligations);
                         updateTableCell(row.code, 'Variance_Budget_EAC', row.variance_budget_eac);
                     });
+
+                    updateTotalsTableRowVisibility(rows);
                 }
 
                 function openValueModal (kind, taskCode, currentValue)
@@ -2319,7 +2383,9 @@ $finrapPocPmHasOverride = $pocPmHasOverride;
                         const rows = recalculateTaskRows();
                         const taskRow = rows.find(function (row) { return row.code === taskCode; });
                         const current = eacOverrideForTask(taskCode);
-                        const displayValue = current !== undefined ? current : (taskRow ? Number(taskRow.eac || 0) : 0);
+                        const displayValue = current !== undefined
+                            ? current
+                            : (taskRow ? Number(taskRow.budget_cost || 0) : 0);
                         openValueModal('eac', taskCode, displayValue);
                     });
                 }
