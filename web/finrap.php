@@ -105,15 +105,14 @@ function finrap_cost_group_value_tooltip_html(string $columnKey): string
 
     if ($columnKey === 'Budget_Cost') {
         return finrap_tooltip_formula_html([
-            ['type' => 'ref', 'table' => 'ProjectenJobTaskLines', 'field' => 'Schedule_Total_Cost'],
+            ['type' => 'ref', 'table' => FINRAP_BUDGET_HOURS_ENTITY_SET, 'field' => FINRAP_BUDGET_COST_FIELD],
         ]);
     }
 
     if ($columnKey === 'EAC') {
         return finrap_tooltip_formula_html([
-            ['type' => 'ref', 'table' => 'ProjectenJobTaskLines', 'field' => 'EAC_Total_Cost'],
             ['type' => 'text', 'text' => LOC('report.tooltip.fallback')],
-            ['type' => 'ref', 'table' => 'ProjectenJobTaskLines', 'field' => 'Schedule_Total_Cost'],
+            ['type' => 'ref', 'table' => FINRAP_BUDGET_HOURS_ENTITY_SET, 'field' => FINRAP_BUDGET_COST_FIELD],
             ['type' => 'text', 'text' => LOC('report.tooltip.fallback_close')],
         ]);
     }
@@ -130,11 +129,20 @@ function finrap_cost_group_value_tooltip_html(string $columnKey): string
         ]);
     }
 
+    if ($columnKey === 'Invoiced_Amount') {
+        return finrap_tooltip_formula_html([
+            ['type' => 'ref', 'table' => 'FactureerbareProjectPlanningsRegels', 'field' => 'Line_Amount_LCY'],
+            ['type' => 'text', 'text' => ' × '],
+            ['type' => 'ref', 'table' => 'FactureerbareProjectPlanningsRegels', 'field' => 'Qty_Invoiced'],
+            ['type' => 'text', 'text' => ' (Job_Task_No)'],
+        ]);
+    }
+
     if ($columnKey === 'Variance_Budget_EAC') {
         return finrap_tooltip_formula_html([
-            ['type' => 'ref', 'table' => 'ProjectenJobTaskLines', 'field' => 'Schedule_Total_Cost'],
+            ['type' => 'ref', 'table' => FINRAP_BUDGET_HOURS_ENTITY_SET, 'field' => FINRAP_BUDGET_COST_FIELD],
             ['type' => 'text', 'text' => ' - '],
-            ['type' => 'ref', 'table' => 'ProjectenJobTaskLines', 'field' => 'EAC_Total_Cost'],
+            ['type' => 'text', 'text' => LOC('report.col.eac')],
         ]);
     }
 
@@ -193,6 +201,7 @@ function finrap_cost_group_columns(): array
         ['key' => 'EAC', 'label' => LOC('report.col.eac'), 'is_right' => true, 'tooltip' => LOC('report.tooltip.col.eac')],
         ['key' => 'Booked_Cost', 'label' => LOC('report.col.booked_cost'), 'is_right' => true, 'tooltip' => LOC('report.tooltip.col.booked_cost')],
         ['key' => 'Entered_Obligations', 'label' => LOC('report.col.entered_obligations'), 'is_right' => true, 'tooltip' => LOC('report.tooltip.col.entered_obligations')],
+        ['key' => 'Invoiced_Amount', 'label' => LOC('report.col.invoiced_amount'), 'is_right' => true, 'tooltip' => LOC('report.tooltip.col.invoiced_amount')],
         ['key' => 'Variance_Budget_EAC', 'label' => LOC('report.col.variance_budget_eac'), 'is_right' => true, 'tooltip' => LOC('report.tooltip.col.variance_budget_eac')],
     ];
 }
@@ -203,6 +212,7 @@ function finrap_is_all_zero_totals_row(array $row): bool
     $eac = finance_to_float($row['EAC'] ?? 0.0);
     $booked = finance_to_float($row['Booked_Cost'] ?? 0.0);
     $obligations = finance_to_float($row['Entered_Obligations'] ?? 0.0);
+    $invoiced = finance_to_float($row['Invoiced_Amount'] ?? 0.0);
     $variance = finance_to_float($row['Variance_Budget_EAC'] ?? 0.0);
 
     $epsilon = 0.000001;
@@ -210,6 +220,7 @@ function finrap_is_all_zero_totals_row(array $row): bool
         && abs($eac) < $epsilon
         && abs($booked) < $epsilon
         && abs($obligations) < $epsilon
+        && abs($invoiced) < $epsilon
         && abs($variance) < $epsilon;
 }
 
@@ -240,7 +251,8 @@ function finrap_render_cost_group_table(array $taskRows, bool $totalsOnly = fals
         }
 
         $taskCode = (string) ($row['Cost_Group_Code'] ?? '');
-        $hideAsAllZeroTotal = $totalsOnly && $hideAllZeroTotals && $isTotalRow && finrap_is_all_zero_totals_row($row);
+        $shouldTrackZeroHide = $hideAllZeroTotals && ($totalsOnly ? $isTotalRow : true);
+        $hideAsAllZeroRow = $shouldTrackZeroHide && finrap_is_all_zero_totals_row($row);
         $descriptionValue = (string) ($row['Cost_Group_Description'] ?? '');
         if (preg_match('/^\d{3}-000-000$/', $taskCode) === 1 && $isTotalRow) {
             $descriptionValue = (string) ($row['Cost_Group_Description'] ?? '');
@@ -260,11 +272,11 @@ function finrap_render_cost_group_table(array $taskRows, bool $totalsOnly = fals
             }
         }
 
-        if ($hideAsAllZeroTotal) {
+        if ($hideAsAllZeroRow) {
             $rowClass = trim($rowClass . ' is-zero-total-hidden');
         }
 
-        $zeroHideAttr = ($totalsOnly && $hideAllZeroTotals && $isTotalRow) ? ' data-hide-if-all-zero="1"' : '';
+        $zeroHideAttr = $shouldTrackZeroHide ? ' data-hide-if-all-zero="1"' : '';
 
         echo '<tr' . ($rowClass !== '' ? ' class="' . htmlspecialchars($rowClass) . '"' : '') . ' data-task-code="' . htmlspecialchars($taskCode) . '" data-is-total-row="' . ($isTotalRow ? '1' : '0') . '"' . $zeroHideAttr . '>';
         foreach ($columns as $column) {
@@ -313,7 +325,7 @@ function finrap_render_cost_group_table(array $taskRows, bool $totalsOnly = fals
 
             $cellClass = trim('is-right ' . finrap_currency_sign_class($value));
             $display = htmlspecialchars(finrap_format_currency($value));
-            $metricAttr = in_array($columnKey, ['Budget_Cost', 'EAC', 'Booked_Cost', 'Entered_Obligations', 'Variance_Budget_EAC'], true)
+            $metricAttr = in_array($columnKey, ['Budget_Cost', 'EAC', 'Booked_Cost', 'Entered_Obligations', 'Invoiced_Amount', 'Variance_Budget_EAC'], true)
                 ? ' data-metric-key="' . htmlspecialchars($columnKey) . '"'
                 : '';
             echo '<td class="' . htmlspecialchars($cellClass) . '"' . $metricAttr . '>' . finrap_render_value_with_tooltip_html($display, $tooltipHtml) . '</td>';
@@ -349,6 +361,7 @@ function finrap_task_rows_for_client(array $taskRows): array
             'eac' => finance_to_float($taskRow['EAC'] ?? 0.0),
             'booked_cost' => finance_to_float($taskRow['Booked_Cost'] ?? 0.0),
             'entered_obligations' => finance_to_float($taskRow['Entered_Obligations'] ?? 0.0),
+            'invoiced_amount' => finance_to_float($taskRow['Invoiced_Amount'] ?? 0.0),
             'variance_budget_eac' => finance_to_float($taskRow['Variance_Budget_EAC'] ?? 0.0),
         ];
     }
@@ -385,13 +398,6 @@ if (($_GET['action'] ?? '') === 'save_overrides') {
     ];
 
     $existingOverrides = finrap_load_report_overrides($saveCompany, $saveProjectNo, $saveReportId);
-
-    if (array_key_exists('poc_pm', $_POST)) {
-        $pocPmRaw = trim((string) ($_POST['poc_pm'] ?? ''));
-        $overridePayload['poc_pm'] = $pocPmRaw === '' ? null : finance_to_float($pocPmRaw);
-    } elseif (array_key_exists('poc_pm', $existingOverrides)) {
-        $overridePayload['poc_pm'] = $existingOverrides['poc_pm'];
-    }
 
     $eacByTaskRaw = $_POST['eac_by_task'] ?? '{}';
     if (is_string($eacByTaskRaw)) {
@@ -492,12 +498,11 @@ $grossProfitPct = abs($contractValue) > $finrapEpsilon ? ($grossProfit / $contra
 $orderResultPct = abs($contractValue) > $finrapEpsilon ? ($orderResult / $contractValue * 100.0) : 0.0;
 $variancePct = abs($contractValue) > $finrapEpsilon ? ($variance / $contractValue * 100.0) : 0.0;
 
-$expVariance = $variance - (float) ($summary['expected_costs'] ?? 0.0);
+$expVariance = finance_calculate_result($budgetCostTotal, $eacTotal);
 $expOrderResult = $contractValue - (float) ($summary['expected_costs'] ?? 0.0);
 $iprResult = $installmentsReceived - $bookedCostTotal;
-$pocCalc = finrap_calculate_poc_percent($bookedCostTotal, $eacTotal);
-$pocPmHasOverride = array_key_exists('poc_pm', $reportOverrides) && $reportOverrides['poc_pm'] !== null;
-$pocPm = $pocPmHasOverride ? finance_to_float($reportOverrides['poc_pm']) : $pocCalc;
+$pocBaseline = finrap_calculate_poc_percent($bookedCostTotal, $budgetCostTotal);
+$pocEac = finrap_calculate_poc_percent($bookedCostTotal, $eacTotal);
 
 $estimatedHoursTable = FINRAP_ESTIMATED_HOURS_ENTITY_SET !== '' ? FINRAP_ESTIMATED_HOURS_ENTITY_SET : FINRAP_BUDGET_HOURS_ENTITY_SET;
 $estimatedHoursField = FINRAP_ESTIMATED_HOURS_FIELD !== '' ? FINRAP_ESTIMATED_HOURS_FIELD : FINRAP_BUDGET_HOURS_FIELD;
@@ -529,14 +534,14 @@ $tooltipOrderResultPct = finrap_tooltip_formula_html([
     ['type' => 'ref', 'table' => 'FactureerbareProjectPlanningsRegels', 'field' => 'Line_Amount_LCY'],
 ]);
 $tooltipVariancePct = finrap_tooltip_formula_html([
-    ['type' => 'ref', 'table' => 'ProjectenJobTaskLines', 'field' => 'Schedule_Total_Cost'],
+    ['type' => 'ref', 'table' => FINRAP_BUDGET_HOURS_ENTITY_SET, 'field' => FINRAP_BUDGET_COST_FIELD],
     ['type' => 'text', 'text' => ' / '],
     ['type' => 'ref', 'table' => 'FactureerbareProjectPlanningsRegels', 'field' => 'Line_Amount_LCY'],
 ]);
 $tooltipExpVariance = finrap_tooltip_formula_html([
-    ['type' => 'ref', 'table' => 'ProjectenJobTaskLines', 'field' => 'Schedule_Total_Cost'],
+    ['type' => 'text', 'text' => LOC('report.col.budget_cost')],
     ['type' => 'text', 'text' => ' - '],
-    ['type' => 'ref', 'table' => 'ProjectFinanceForecast', 'field' => 'expected_costs'],
+    ['type' => 'text', 'text' => LOC('report.col.eac')],
 ]);
 $tooltipExpOrderResult = finrap_tooltip_formula_html([
     ['type' => 'ref', 'table' => 'FactureerbareProjectPlanningsRegels', 'field' => 'Line_Amount_LCY'],
@@ -544,17 +549,22 @@ $tooltipExpOrderResult = finrap_tooltip_formula_html([
     ['type' => 'ref', 'table' => 'ProjectFinanceForecast', 'field' => 'expected_costs'],
 ]);
 $tooltipIprResult = finrap_tooltip_formula_html([
+    ['type' => 'text', 'text' => '('],
     ['type' => 'ref', 'table' => 'Customer_Ledger_Entries', 'field' => 'Amount_LCY'],
     ['type' => 'text', 'text' => ' - '],
+    ['type' => 'ref', 'table' => 'Customer_Ledger_Entries', 'field' => 'Remaining_Amt_LCY'],
+    ['type' => 'text', 'text' => ') - '],
     ['type' => 'ref', 'table' => 'JobLedgerEntries', 'field' => 'Total_Cost_LCY'],
 ]);
-$tooltipPocPm = finrap_tooltip_formula_html([
-    ['type' => 'text', 'text' => LOC('report.tooltip.exp.poc_pm')],
-]);
-$tooltipPocCalc = finrap_tooltip_formula_html([
-    ['type' => 'ref', 'table' => 'JobLedgerEntries', 'field' => 'Total_Cost_LCY'],
+$tooltipPocBaseline = finrap_tooltip_formula_html([
+    ['type' => 'text', 'text' => LOC('report.col.booked_cost')],
     ['type' => 'text', 'text' => ' / '],
-    ['type' => 'ref', 'table' => 'ProjectenJobTaskLines', 'field' => 'EAC_Total_Cost'],
+    ['type' => 'text', 'text' => LOC('report.col.budget_cost')],
+]);
+$tooltipPocEac = finrap_tooltip_formula_html([
+    ['type' => 'text', 'text' => LOC('report.col.booked_cost')],
+    ['type' => 'text', 'text' => ' / '],
+    ['type' => 'text', 'text' => LOC('report.col.eac')],
 ]);
 $tooltipProjectNo = finrap_tooltip_formula_html([
     ['type' => 'ref', 'table' => 'Projecten', 'field' => 'No'],
@@ -607,9 +617,9 @@ $tooltipGrossProfit = finrap_tooltip_formula_html([
     ['type' => 'ref', 'table' => 'ProjectFinanceForecast', 'field' => 'expected_costs'],
 ]);
 $tooltipVarianceValue = finrap_tooltip_formula_html([
-    ['type' => 'ref', 'table' => 'ProjectenJobTaskLines', 'field' => 'Schedule_Total_Cost'],
+    ['type' => 'ref', 'table' => FINRAP_BUDGET_HOURS_ENTITY_SET, 'field' => FINRAP_BUDGET_COST_FIELD],
     ['type' => 'text', 'text' => ' - '],
-    ['type' => 'ref', 'table' => 'ProjectenJobTaskLines', 'field' => 'EAC_Total_Cost'],
+    ['type' => 'text', 'text' => LOC('report.col.eac')],
 ]);
 $tooltipOrderResult = finrap_tooltip_formula_html([
     ['type' => 'text', 'text' => '(Contract Value - Total Direct Cost) - Variance'],
@@ -619,9 +629,8 @@ $tooltipInstallmentsInvoiced = finrap_tooltip_formula_html([
 ]);
 $tooltipInstallmentsReceived = finrap_tooltip_formula_html([
     ['type' => 'ref', 'table' => 'Customer_Ledger_Entries', 'field' => 'Amount_LCY'],
-]);
-$tooltipTermijnNo = finrap_tooltip_formula_html([
-    ['type' => 'ref', 'table' => 'FactureerbareProjectPlanningsRegels', 'field' => 'Line_No'],
+    ['type' => 'text', 'text' => ' - '],
+    ['type' => 'ref', 'table' => 'Customer_Ledger_Entries', 'field' => 'Remaining_Amt_LCY'],
 ]);
 $tooltipTermijnDocumentNo = finrap_tooltip_formula_html([
     ['type' => 'ref', 'table' => 'FactureerbareProjectPlanningsRegels', 'field' => 'Document_No'],
@@ -643,7 +652,6 @@ $termijnLines = is_array($modal['termijn_lines'] ?? null) ? $modal['termijn_line
 $finrapClientTaskRows = finrap_task_rows_for_client($taskRows);
 $finrapClientEacOverrides = $eacOverrides;
 $finrapReportId = $reportId;
-$finrapPocPmHasOverride = $pocPmHasOverride;
 $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides($company, $projectNo, $reportId);
 ?>
 <!doctype html>
@@ -1043,6 +1051,58 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
         .has-value-tooltip:hover .value-tooltip-rich {
             opacity: 1;
             transform: translateY(0);
+        }
+
+        body.finrap-floating-tooltips [data-tooltip]::after,
+        body.finrap-floating-tooltips [data-tooltip]::before,
+        body.finrap-floating-tooltips .has-value-tooltip:hover .value-tooltip-rich {
+            opacity: 0 !important;
+            visibility: hidden !important;
+        }
+
+        body.finrap-floating-tooltips .value-tooltip-rich {
+            display: none !important;
+        }
+
+        .finrap-floating-tooltip {
+            position: fixed;
+            z-index: 30000;
+            background: #1f2937;
+            color: #ffffff;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 400;
+            white-space: normal;
+            max-width: min(360px, calc(100vw - 16px));
+            min-width: 120px;
+            letter-spacing: normal;
+            line-height: 1.4;
+            pointer-events: none;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+        }
+
+        .finrap-floating-tooltip[hidden] {
+            display: none !important;
+        }
+
+        .finrap-floating-tooltip .value-tooltip-table {
+            color: #22c55e;
+            font-weight: 700;
+        }
+
+        .finrap-floating-tooltip .value-tooltip-field {
+            color: #f59e0b;
+            font-weight: 700;
+        }
+
+        .finrap-floating-tooltip .value-tooltip-op {
+            color: #ffffff;
+        }
+
+        .finrap-floating-tooltip .value-tooltip-operator {
+            color: #93c5fd;
+            font-weight: 700;
         }
 
         .value-tooltip-table {
@@ -1474,6 +1534,13 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
             white-space: nowrap;
         }
 
+        .termijn-item--wide-document .termijn-document {
+            grid-column: 1 / 3;
+            white-space: normal;
+            overflow: visible;
+            text-overflow: unset;
+        }
+
         .termijn-empty {
             padding: 10px;
             font-size: 12px;
@@ -1671,7 +1738,6 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                                     </th>
                                     <th class="is-right" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.gross_profit'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.gross_profit'), ENT_QUOTES) ?>
                                     </th>
-                                    <th class="is-right" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.col.budget_cost'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.col.budget_cost'), ENT_QUOTES) ?></th>
                                     <th class="is-right" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.col.eac'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.col.eac'), ENT_QUOTES) ?></th>
                                     <th class="is-right" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.col.booked_cost'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.col.booked_cost'), ENT_QUOTES) ?></th>
                                     <th class="is-right" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.col.entered_obligations'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.col.entered_obligations'), ENT_QUOTES) ?></th>
@@ -1694,9 +1760,6 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                                     </td>
                                     <td class="is-right <?= finrap_currency_sign_class($grossProfit) ?>" id="metricGrossProfit">
                                         <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($grossProfit)), $tooltipGrossProfit) ?>
-                                    </td>
-                                    <td class="is-right <?= finrap_currency_sign_class($budgetCostTotal) ?>" id="metricBudgetCost">
-                                        <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($budgetCostTotal)), finrap_cost_group_value_tooltip_html('Budget_Cost')) ?>
                                     </td>
                                     <td class="is-right <?= finrap_currency_sign_class($eacTotal) ?>" id="metricEac">
                                         <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($eacTotal)), finrap_cost_group_value_tooltip_html('EAC')) ?>
@@ -1782,7 +1845,7 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                                 <div class="analytics-row">
                                     <span class="analytics-label" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.exp.variance'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.exp.variance'), ENT_QUOTES) ?></span>
                                     <span
-                                        class="analytics-value <?= finrap_currency_sign_class($expVariance) ?> has-value-tooltip"><?= htmlspecialchars(finrap_format_currency($expVariance)) ?><span class="value-tooltip-rich"><?= $tooltipExpVariance ?></span></span>
+                                        class="analytics-value <?= finrap_currency_sign_class($expVariance) ?> has-value-tooltip" id="metricExpVariance"><?= htmlspecialchars(finrap_format_currency($expVariance)) ?><span class="value-tooltip-rich"><?= $tooltipExpVariance ?></span></span>
                                 </div>
                                 <div class="analytics-row">
                                     <span class="analytics-label"
@@ -1797,23 +1860,16 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                                         class="analytics-value <?= finrap_currency_sign_class($iprResult) ?> has-value-tooltip"><?= htmlspecialchars(finrap_format_currency($iprResult)) ?><span class="value-tooltip-rich"><?= $tooltipIprResult ?></span></span>
                                 </div>
                                 <div class="analytics-row">
-                                    <span class="analytics-label" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.exp.poc_pm'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.exp.poc_pm'), ENT_QUOTES) ?></span>
-                                    <span class="analytics-value has-value-tooltip">
-                                        <?php if ($finrapOverridesEditable): ?>
-                                        <button type="button" class="finrap-editable-value-btn" id="pocPmButton" data-edit-kind="poc_pm">
-                                            <?= htmlspecialchars($pocPm === null ? '-' : finrap_format_percent($pocPm)) ?>
-                                        </button>
-                                        <?php else: ?>
-                                        <span id="pocPmButton"><?= htmlspecialchars($pocPm === null ? '-' : finrap_format_percent($pocPm)) ?></span>
-                                        <?php endif; ?>
-                                        <span class="value-tooltip-rich"><?= $tooltipPocPm ?></span>
-                                    </span>
+                                    <span class="analytics-label"
+                                        data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.exp.poc_baseline'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.exp.poc_baseline'), ENT_QUOTES) ?></span>
+                                    <span
+                                        class="analytics-value has-value-tooltip" id="pocBaselineValue"><?= htmlspecialchars(finrap_format_percent($pocBaseline)) ?><span class="value-tooltip-rich"><?= $tooltipPocBaseline ?></span></span>
                                 </div>
                                 <div class="analytics-row">
                                     <span class="analytics-label"
-                                        data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.exp.poc_calc'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.exp.poc_calc'), ENT_QUOTES) ?></span>
+                                        data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.exp.poc_eac'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.exp.poc_eac'), ENT_QUOTES) ?></span>
                                     <span
-                                        class="analytics-value has-value-tooltip" id="pocCalcValue"><?= htmlspecialchars(finrap_format_percent($pocCalc)) ?><span class="value-tooltip-rich"><?= $tooltipPocCalc ?></span></span>
+                                        class="analytics-value has-value-tooltip" id="pocEacValue"><?= htmlspecialchars(finrap_format_percent($pocEac)) ?><span class="value-tooltip-rich"><?= $tooltipPocEac ?></span></span>
                                 </div>
                             </div>
                         </div>
@@ -1827,13 +1883,18 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                                     <ul class="termijn-list">
                                         <?php foreach ($termijnLines as $termijnLine): ?>
                                             <?php
-                                            $termijnNo = (int) ($termijnLine['termijn_no'] ?? 0);
                                             $termijnDocumentNo = trim((string) ($termijnLine['document_no'] ?? ''));
                                             $termijnDescription = trim((string) ($termijnLine['description'] ?? ''));
+                                            $termijnUsesDescriptionFallback = $termijnDocumentNo === '' && $termijnDescription !== '';
                                             $termijnDocumentLabel = $termijnDocumentNo !== ''
                                                 ? $termijnDocumentNo
-                                                : LOC('report.termijn.label', $termijnNo);
-                                            $termijnDocumentTooltip = $termijnDocumentNo !== '' ? $tooltipTermijnDocumentNo : $tooltipTermijnNo;
+                                                : ($termijnDescription !== '' ? $termijnDescription : '-');
+                                            $termijnDocumentTooltip = $termijnDocumentNo !== ''
+                                                ? $tooltipTermijnDocumentNo
+                                                : $tooltipTermijnDescription;
+                                            $termijnDescriptionDisplay = $termijnDocumentNo !== '' && $termijnDescription !== ''
+                                                ? $termijnDescription
+                                                : '-';
                                             $termijnAmount = (float) ($termijnLine['amount'] ?? 0.0);
                                             $termijnDate = finrap_format_date_nl((string) ($termijnLine['planning_date'] ?? ''));
                                             $termijnStatus = trim((string) ($termijnLine['status'] ?? ''));
@@ -1841,9 +1902,11 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                                                 (float) ($termijnLine['invoiced_amount'] ?? 0.0) > 0.000001 ? LOC('report.termijn.status.invoiced') : LOC('report.termijn.status.open')
                                             );
                                             ?>
-                                            <li class="termijn-item">
+                                            <li class="termijn-item<?= $termijnUsesDescriptionFallback ? ' termijn-item--wide-document' : '' ?>">
                                                 <span class="termijn-document"><?= finrap_render_value_with_tooltip_html(htmlspecialchars($termijnDocumentLabel), $termijnDocumentTooltip) ?></span>
-                                                <span class="termijn-description"><?= finrap_render_value_with_tooltip_html(htmlspecialchars($termijnDescription !== '' ? $termijnDescription : '-'), $tooltipTermijnDescription) ?></span>
+                                                <?php if (!$termijnUsesDescriptionFallback): ?>
+                                                <span class="termijn-description"><?= finrap_render_value_with_tooltip_html(htmlspecialchars($termijnDescriptionDisplay), $tooltipTermijnDescription) ?></span>
+                                                <?php endif; ?>
                                                 <span class="termijn-status"><?= finrap_render_value_with_tooltip_html(htmlspecialchars($termijnStatus), $tooltipTermijnStatus) ?></span>
                                                 <span class="termijn-amount"><?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($termijnAmount)), $tooltipTermijnAmount) ?></span>
                                                 <span class="termijn-date"><?= finrap_render_value_with_tooltip_html(htmlspecialchars($termijnDate), $tooltipTermijnDate) ?></span>
@@ -1857,7 +1920,7 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                     </section>
 
                     <section class="project-modal-cost-groups-section">
-                        <?php finrap_render_cost_group_table($taskRows, false, false, $finrapOverridesEditable, 'finrapCostDetailTable'); ?>
+                        <?php finrap_render_cost_group_table($taskRows, false, true, $finrapOverridesEditable, 'finrapCostDetailTable'); ?>
                     </section>
                 <?php endif; ?>
 
@@ -1883,7 +1946,6 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
             (function ()
             {
                 const finrapI18n = <?= localizationJsTranslations([
-                    'report.modal.poc_pm_title',
                     'report.modal.eac_title',
                     'report.modal.value_label',
                 ]) ?>;
@@ -1898,8 +1960,6 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                 };
 
                 let eacOverrides = Object.assign({}, <?= json_encode($finrapClientEacOverrides, JSON_FORCE_OBJECT) ?>);
-                let pocPm = <?= json_encode($pocPm, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
-                let pocPmHasOverride = <?= $finrapPocPmHasOverride ? 'true' : 'false' ?>;
                 const finrapOverridesEditable = <?= $finrapOverridesEditable ? 'true' : 'false' ?>;
 
                 const valueModal = document.getElementById('finrapValueModal');
@@ -1907,7 +1967,6 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                 const valueModalInput = document.getElementById('finrapValueModalInput');
                 const valueModalSave = document.getElementById('finrapValueModalSave');
                 const valueModalCancel = document.getElementById('finrapValueModalCancel');
-                const pocPmButton = document.getElementById('pocPmButton');
                 const detailTable = document.getElementById('finrapCostDetailTable');
                 const totalsTable = document.getElementById('finrapCostTotalsTable');
                 const costGroupTables = [detailTable, totalsTable].filter(function (table) { return table !== null; });
@@ -2023,6 +2082,7 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                     let eacTotal = 0;
                     let bookedTotal = 0;
                     let obligationsTotal = 0;
+                    let invoicedTotal = 0;
 
                     rows.forEach(function (row)
                     {
@@ -2035,6 +2095,7 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                         eacTotal += Number(row.eac || 0);
                         bookedTotal += Number(row.booked_cost || 0);
                         obligationsTotal += Number(row.entered_obligations || 0);
+                        invoicedTotal += Number(row.invoiced_amount || 0);
                     });
 
                     return {
@@ -2042,6 +2103,7 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                         eac: eacTotal,
                         booked_cost: bookedTotal,
                         entered_obligations: obligationsTotal,
+                        invoiced_amount: invoicedTotal,
                         variance_budget_eac: budgetTotal - eacTotal
                     };
                 }
@@ -2088,6 +2150,7 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                         let eacTotal = 0;
                         let bookedTotal = 0;
                         let obligationsTotal = 0;
+                        let invoicedTotal = 0;
 
                         rows.forEach(function (detailRow)
                         {
@@ -2100,12 +2163,14 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                             eacTotal += Number(detailRow.eac || 0);
                             bookedTotal += Number(detailRow.booked_cost || 0);
                             obligationsTotal += Number(detailRow.entered_obligations || 0);
+                            invoicedTotal += Number(detailRow.invoiced_amount || 0);
                         });
 
                         row.budget_cost = budgetTotal;
                         row.eac = eacTotal;
                         row.booked_cost = bookedTotal;
                         row.entered_obligations = obligationsTotal;
+                        row.invoiced_amount = invoicedTotal;
                     });
 
                     rows.forEach(function (row)
@@ -2129,6 +2194,7 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                         Number(row.eac || 0),
                         Number(row.booked_cost || 0),
                         Number(row.entered_obligations || 0),
+                        Number(row.invoiced_amount || 0),
                         Number(row.variance_budget_eac || 0)
                     ];
 
@@ -2138,9 +2204,9 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                     });
                 }
 
-                function updateTotalsTableRowVisibility (rows)
+                function updateZeroRowVisibility (rows, table)
                 {
-                    if (!totalsTable)
+                    if (!table)
                     {
                         return;
                     }
@@ -2151,7 +2217,7 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                         rowByCode[row.code] = row;
                     });
 
-                    totalsTable.querySelectorAll('tr[data-hide-if-all-zero="1"]').forEach(function (tableRow)
+                    table.querySelectorAll('tr[data-hide-if-all-zero="1"]').forEach(function (tableRow)
                     {
                         const taskCode = String(tableRow.dataset.taskCode || '');
                         const calculatedRow = rowByCode[taskCode];
@@ -2169,6 +2235,12 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                             tableRow.classList.remove('is-zero-total-hidden');
                         }
                     });
+                }
+
+                function updateAllZeroRowVisibility (rows)
+                {
+                    updateZeroRowVisibility(rows, totalsTable);
+                    updateZeroRowVisibility(rows, detailTable);
                 }
 
                 function updateMetricCell (id, value)
@@ -2257,19 +2329,12 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                     const variance = Number(summaryTotals.variance_budget_eac || (budgetCost - eac));
                     const grossProfit = Number(finrapContext.contractValue || 0) - Number(finrapContext.totalDirectCost || 0);
                     const orderResult = grossProfit - variance;
-                    const pocCalc = calculatePocPercent(bookedCost, eac);
+                    const pocBaseline = calculatePocPercent(bookedCost, budgetCost);
+                    const pocEac = calculatePocPercent(bookedCost, eac);
                     const contractValue = Number(finrapContext.contractValue || 0);
                     const variancePct = Math.abs(contractValue) > 0.000001 ? (variance / contractValue * 100) : 0;
                     const orderResultPct = Math.abs(contractValue) > 0.000001 ? (orderResult / contractValue * 100) : 0;
-
-                    if (!pocPmHasOverride)
-                    {
-                        pocPm = pocCalc;
-                        if (pocPmButton)
-                        {
-                            pocPmButton.textContent = formatPercent(pocPm);
-                        }
-                    }
+                    const expVariance = budgetCost - eac;
 
                     updateMetricCell('metricBudgetCost', budgetCost);
                     updateMetricCell('metricEac', eac);
@@ -2277,7 +2342,9 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                     updateMetricCell('metricObligations', obligations);
                     updateMetricCell('metricVariance', variance);
                     updateMetricCell('metricOrderResult', orderResult);
-                    updateAnalyticsValue('pocCalcValue', pocCalc, formatPercent);
+                    updateAnalyticsValue('metricExpVariance', expVariance, formatCurrency);
+                    updateAnalyticsValue('pocBaselineValue', pocBaseline, formatPercent);
+                    updateAnalyticsValue('pocEacValue', pocEac, formatPercent);
 
                     const variancePctEl = document.getElementById('metricVariancePct');
                     if (variancePctEl)
@@ -2301,10 +2368,11 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                         updateTableCell(row.code, 'EAC', row.eac);
                         updateTableCell(row.code, 'Booked_Cost', row.booked_cost);
                         updateTableCell(row.code, 'Entered_Obligations', row.entered_obligations);
+                        updateTableCell(row.code, 'Invoiced_Amount', row.invoiced_amount);
                         updateTableCell(row.code, 'Variance_Budget_EAC', row.variance_budget_eac);
                     });
 
-                    updateTotalsTableRowVisibility(rows);
+                    updateAllZeroRowVisibility(rows);
                 }
 
                 function openValueModal (kind, taskCode, currentValue)
@@ -2313,9 +2381,7 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                     modalTaskCode = taskCode || '';
                     if (valueModalTitle)
                     {
-                        valueModalTitle.textContent = kind === 'poc_pm'
-                            ? finrapI18n['report.modal.poc_pm_title']
-                            : finrapI18n['report.modal.eac_title'] + (taskCode ? ' (' + taskCode + ')' : '');
+                        valueModalTitle.textContent = finrapI18n['report.modal.eac_title'] + (taskCode ? ' (' + taskCode + ')' : '');
                     }
                     if (valueModalInput)
                     {
@@ -2356,11 +2422,6 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                         eac_by_task: JSON.stringify(eacOverrides)
                     });
 
-                    if (pocPmHasOverride)
-                    {
-                        body.set('poc_pm', pocPm === null ? '' : String(pocPm));
-                    }
-
                     return fetch('finrap.php?action=save_overrides', {
                         method: 'POST',
                         credentials: 'same-origin',
@@ -2373,14 +2434,6 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
 
                 if (finrapOverridesEditable)
                 {
-                    if (pocPmButton)
-                    {
-                        pocPmButton.addEventListener('click', function ()
-                        {
-                            openValueModal('poc_pm', '', pocPm);
-                        });
-                    }
-
                     if (detailTable)
                     {
                         detailTable.addEventListener('click', function (event)
@@ -2442,16 +2495,7 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                             const saveKind = modalKind;
                             const saveTaskCode = modalTaskCode;
 
-                            if (saveKind === 'poc_pm')
-                            {
-                                pocPm = parsed;
-                                pocPmHasOverride = true;
-                                if (pocPmButton)
-                                {
-                                    pocPmButton.textContent = formatPercent(pocPm);
-                                }
-                            }
-                            else if (saveKind === 'eac' && saveTaskCode !== '')
+                            if (saveKind === 'eac' && saveTaskCode !== '')
                             {
                                 eacOverrides[saveTaskCode] = parsed;
                             }
@@ -2464,6 +2508,118 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                 }
 
                 renderCalculatedState();
+
+                (function initFloatingTooltips ()
+                {
+                    document.body.classList.add('finrap-floating-tooltips');
+
+                    let tooltipEl = document.getElementById('finrapFloatingTooltip');
+                    if (!tooltipEl)
+                    {
+                        tooltipEl = document.createElement('div');
+                        tooltipEl.id = 'finrapFloatingTooltip';
+                        tooltipEl.className = 'finrap-floating-tooltip';
+                        tooltipEl.hidden = true;
+                        document.body.appendChild(tooltipEl);
+                    }
+
+                    let activeTrigger = null;
+
+                    function hideFloatingTooltip ()
+                    {
+                        activeTrigger = null;
+                        tooltipEl.hidden = true;
+                        tooltipEl.textContent = '';
+                        tooltipEl.innerHTML = '';
+                    }
+
+                    function positionFloatingTooltip (trigger)
+                    {
+                        const rect = trigger.getBoundingClientRect();
+                        tooltipEl.hidden = false;
+                        tooltipEl.style.visibility = 'hidden';
+                        tooltipEl.style.left = '0px';
+                        tooltipEl.style.top = '0px';
+
+                        const tipRect = tooltipEl.getBoundingClientRect();
+                        const padding = 8;
+                        let top = rect.top - tipRect.height - 10;
+                        let left = rect.left + (rect.width / 2) - (tipRect.width / 2);
+
+                        left = Math.max(padding, Math.min(left, window.innerWidth - tipRect.width - padding));
+                        if (top < padding)
+                        {
+                            top = rect.bottom + 10;
+                        }
+                        if (top + tipRect.height > window.innerHeight - padding)
+                        {
+                            top = Math.max(padding, window.innerHeight - tipRect.height - padding);
+                        }
+
+                        tooltipEl.style.left = left + 'px';
+                        tooltipEl.style.top = top + 'px';
+                        tooltipEl.style.visibility = '';
+                    }
+
+                    function showFloatingTooltip (trigger)
+                    {
+                        if (!(trigger instanceof Element))
+                        {
+                            return;
+                        }
+
+                        activeTrigger = trigger;
+                        if (trigger.matches('[data-tooltip]'))
+                        {
+                            tooltipEl.textContent = trigger.getAttribute('data-tooltip') || '';
+                        }
+                        else
+                        {
+                            const rich = trigger.querySelector('.value-tooltip-rich');
+                            if (!rich)
+                            {
+                                hideFloatingTooltip();
+                                return;
+                            }
+
+                            tooltipEl.innerHTML = rich.innerHTML;
+                        }
+
+                        positionFloatingTooltip(trigger);
+                    }
+
+                    document.addEventListener('mouseover', function (event)
+                    {
+                        const trigger = event.target instanceof Element
+                            ? event.target.closest('[data-tooltip], .has-value-tooltip')
+                            : null;
+                        if (!trigger || trigger === activeTrigger)
+                        {
+                            return;
+                        }
+
+                        showFloatingTooltip(trigger);
+                    });
+
+                    document.addEventListener('mouseout', function (event)
+                    {
+                        if (!activeTrigger)
+                        {
+                            return;
+                        }
+
+                        const related = event.relatedTarget;
+                        if (related instanceof Node && activeTrigger.contains(related))
+                        {
+                            return;
+                        }
+
+                        hideFloatingTooltip();
+                    });
+
+                    window.addEventListener('scroll', hideFloatingTooltip, true);
+                    window.addEventListener('resize', hideFloatingTooltip);
+                })();
             })();
         </script>
     <?php endif; ?>
