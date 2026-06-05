@@ -67,6 +67,18 @@ function finrap_generate_report_id(): string
     }
 }
 
+function finrap_email_local_part(string $email): string
+{
+    $email = strtolower(trim($email));
+    if ($email === '') {
+        return '';
+    }
+
+    $atPos = strpos($email, '@');
+
+    return $atPos === false ? $email : substr($email, 0, $atPos);
+}
+
 function finrap_report_cache_path(string $company, string $projectNo, string $reportId): string
 {
     $safeCompany = finrap_normalize_company($company);
@@ -339,6 +351,7 @@ function finrap_list_report_snapshots(string $company, string $projectNo): array
             'report_id' => $reportId,
             'fetched_at' => is_array($payload) ? (string) ($payload['fetched_at'] ?? '') : '',
             'auto_report' => finrap_is_auto_report(is_array($payload) ? $payload : []),
+            'created_by' => finrap_email_local_part(is_array($payload) ? (string) ($payload['created_by_email'] ?? '') : ''),
         ];
     }
 
@@ -438,6 +451,10 @@ function finrap_run_nightly_reports(): array
             continue;
         }
 
+        if (!finrap_should_generate_nightly_report($company, $projectNo)) {
+            continue;
+        }
+
         $startedAt = hrtime(true);
         try {
             $report = finrap_generate_month_for_project($company, $projectNo, $yearMonth);
@@ -469,6 +486,490 @@ function finrap_run_nightly_reports(): array
     }
 
     return $results;
+}
+
+function finrap_report_timezone(): DateTimeZone
+{
+    return new DateTimeZone('Europe/Amsterdam');
+}
+
+function finrap_report_fetched_datetime(string $fetchedAt): ?DateTimeImmutable
+{
+    $value = trim($fetchedAt);
+    if ($value === '') {
+        return null;
+    }
+
+    try {
+        return (new DateTimeImmutable($value))->setTimezone(finrap_report_timezone());
+    } catch (Throwable $ignoredDateParseError) {
+        return null;
+    }
+}
+
+function finrap_report_fetched_date(string $fetchedAt): ?string
+{
+    $dateTime = finrap_report_fetched_datetime($fetchedAt);
+
+    return $dateTime instanceof DateTimeImmutable ? $dateTime->format('Y-m-d') : null;
+}
+
+function finrap_parse_project_ending_date(?array $project): ?DateTimeImmutable
+{
+    if (!is_array($project)) {
+        return null;
+    }
+
+    $raw = trim((string) ($project['Ending_Date'] ?? ''));
+    if ($raw === '') {
+        return null;
+    }
+
+    try {
+        return (new DateTimeImmutable($raw, finrap_report_timezone()))->setTime(0, 0, 0);
+    } catch (Throwable $ignoredDateParseError) {
+        return null;
+    }
+}
+
+function finrap_get_project_ending_date(string $company, string $projectNo): ?DateTimeImmutable
+{
+    $reports = finrap_list_report_snapshots($company, $projectNo);
+    foreach ($reports as $reportEntry) {
+        if (!is_array($reportEntry)) {
+            continue;
+        }
+
+        $reportId = trim((string) ($reportEntry['report_id'] ?? ''));
+        if ($reportId === '') {
+            continue;
+        }
+
+        $payload = finrap_load_report_snapshot($company, $projectNo, $reportId);
+        $project = is_array($payload['project'] ?? null) ? $payload['project'] : null;
+        $endingDate = finrap_parse_project_ending_date($project);
+        if ($endingDate instanceof DateTimeImmutable) {
+            return $endingDate;
+        }
+    }
+
+    try {
+        $project = finrap_fetch_project($company, $projectNo, 3600);
+    } catch (Throwable $ignoredProjectLoadError) {
+        return null;
+    }
+
+    return finrap_parse_project_ending_date(is_array($project) ? $project : null);
+}
+
+function finrap_is_ending_date_passed(?DateTimeImmutable $endingDate): bool
+{
+    if (!$endingDate instanceof DateTimeImmutable) {
+        return false;
+    }
+
+    $today = new DateTimeImmutable('today', finrap_report_timezone());
+
+    return $endingDate < $today;
+}
+
+function finrap_has_recent_manual_report_after_ending(string $company, string $projectNo, DateTimeImmutable $endingDate): bool
+{
+    $cutoff = new DateTimeImmutable('-1 month', finrap_report_timezone());
+    $reports = finrap_list_report_snapshots($company, $projectNo);
+
+    foreach ($reports as $reportEntry) {
+        if (!is_array($reportEntry) || (bool) ($reportEntry['auto_report'] ?? false)) {
+            continue;
+        }
+
+        $fetchedAt = finrap_report_fetched_datetime((string) ($reportEntry['fetched_at'] ?? ''));
+        if (!$fetchedAt instanceof DateTimeImmutable) {
+            continue;
+        }
+
+        $fetchedDate = $fetchedAt->setTime(0, 0, 0);
+        if ($fetchedDate <= $endingDate || $fetchedDate < $cutoff) {
+            continue;
+        }
+
+        return true;
+    }
+
+    return false;
+}
+
+function finrap_should_generate_nightly_report(string $company, string $projectNo): bool
+{
+    $endingDate = finrap_get_project_ending_date($company, $projectNo);
+    if (!finrap_is_ending_date_passed($endingDate)) {
+        return true;
+    }
+
+    return finrap_has_recent_manual_report_after_ending($company, $projectNo, $endingDate);
+}
+
+function finrap_list_project_report_entries(string $company, string $projectNo): array
+{
+    $entries = [];
+    foreach (finrap_list_report_snapshots($company, $projectNo) as $reportEntry) {
+        if (!is_array($reportEntry)) {
+            continue;
+        }
+
+        $reportId = trim((string) ($reportEntry['report_id'] ?? ''));
+        if ($reportId === '') {
+            continue;
+        }
+
+        $entries[] = [
+            'report_id' => $reportId,
+            'fetched_at' => (string) ($reportEntry['fetched_at'] ?? ''),
+            'auto_report' => (bool) ($reportEntry['auto_report'] ?? false),
+        ];
+    }
+
+    usort($entries, static function (array $left, array $right): int {
+        return strcmp((string) ($left['fetched_at'] ?? ''), (string) ($right['fetched_at'] ?? ''));
+    });
+
+    return $entries;
+}
+
+function finrap_select_dashboard_report_entries(array $entries, bool $debugAllReports): array
+{
+    if ($debugAllReports) {
+        return $entries;
+    }
+
+    $latestAutoByDay = [];
+    foreach ($entries as $entry) {
+        if (!is_array($entry) || !(bool) ($entry['auto_report'] ?? false)) {
+            continue;
+        }
+
+        $day = finrap_report_fetched_date((string) ($entry['fetched_at'] ?? ''));
+        if ($day === null) {
+            continue;
+        }
+
+        if (
+            !isset($latestAutoByDay[$day])
+            || strcmp((string) ($entry['fetched_at'] ?? ''), (string) ($latestAutoByDay[$day]['fetched_at'] ?? '')) > 0
+        ) {
+            $latestAutoByDay[$day] = $entry;
+        }
+    }
+
+    $selected = array_values($latestAutoByDay);
+    usort($selected, static function (array $left, array $right): int {
+        return strcmp((string) ($left['fetched_at'] ?? ''), (string) ($right['fetched_at'] ?? ''));
+    });
+
+    return $selected;
+}
+
+function finrap_compute_report_poc_metrics(string $company, string $projectNo, string $reportId): ?array
+{
+    $reportId = trim($reportId);
+    if ($reportId === '') {
+        return null;
+    }
+
+    $payload = finrap_load_report_snapshot($company, $projectNo, $reportId);
+    if (!is_array($payload)) {
+        return null;
+    }
+
+    $modal = is_array($payload['project_modal'] ?? null) ? $payload['project_modal'] : [];
+    $taskRows = is_array($modal['task_rows'] ?? null) ? $modal['task_rows'] : [];
+    $overrides = finrap_load_report_overrides($company, $projectNo, $reportId);
+    $eacOverrides = is_array($overrides['eac_by_task'] ?? null) ? $overrides['eac_by_task'] : [];
+    $taskRows = finrap_apply_eac_overrides_to_task_rows($taskRows, $eacOverrides);
+    $summaryTotals = finrap_get_report_summary_totals($taskRows);
+
+    $bookedCost = finance_to_float($summaryTotals['Booked_Cost'] ?? 0.0);
+    $budgetCost = finance_to_float($summaryTotals['Budget_Cost'] ?? 0.0);
+    $eacTotal = finance_to_float($summaryTotals['EAC'] ?? 0.0);
+
+    return [
+        'poc_baseline' => finrap_calculate_poc_percent($bookedCost, $budgetCost),
+        'poc_eac' => finrap_calculate_poc_percent($bookedCost, $eacTotal),
+    ];
+}
+
+function finrap_build_project_dashboard(string $company, string $projectNo, bool $debugAllReports = false): array
+{
+    $entries = finrap_list_project_report_entries($company, $projectNo);
+    $selected = finrap_select_dashboard_report_entries($entries, $debugAllReports);
+    $points = [];
+    $seriesStartDate = null;
+
+    foreach ($selected as $index => $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+
+        $reportId = trim((string) ($entry['report_id'] ?? ''));
+        if ($reportId === '') {
+            continue;
+        }
+
+        if ($debugAllReports) {
+            if (!$seriesStartDate instanceof DateTimeImmutable) {
+                $firstDay = finrap_report_fetched_date((string) ($entry['fetched_at'] ?? ''));
+                $seriesStartDate = $firstDay !== null
+                    ? new DateTimeImmutable($firstDay, finrap_report_timezone())
+                    : new DateTimeImmutable('today', finrap_report_timezone());
+            }
+
+            $chartDate = $seriesStartDate->modify('+' . (int) $index . ' days')->format('Y-m-d');
+        } else {
+            $chartDate = finrap_report_fetched_date((string) ($entry['fetched_at'] ?? ''));
+            if ($chartDate === null) {
+                continue;
+            }
+        }
+
+        $metrics = finrap_compute_report_poc_metrics($company, $projectNo, $reportId);
+        if (!is_array($metrics)) {
+            continue;
+        }
+
+        $points[] = [
+            'date' => $chartDate,
+            'report_id' => $reportId,
+            'auto_report' => (bool) ($entry['auto_report'] ?? false),
+            'poc_baseline' => round(finance_to_float($metrics['poc_baseline'] ?? 0.0), 2),
+            'poc_eac' => round(finance_to_float($metrics['poc_eac'] ?? 0.0), 2),
+        ];
+    }
+
+    $yMaxPercent = 100.0;
+    foreach ($points as $point) {
+        if (!is_array($point)) {
+            continue;
+        }
+
+        $yMaxPercent = max(
+            $yMaxPercent,
+            finance_to_float($point['poc_baseline'] ?? 0.0),
+            finance_to_float($point['poc_eac'] ?? 0.0)
+        );
+    }
+
+    return [
+        'company' => $company,
+        'project_no' => $projectNo,
+        'debug_all_reports' => $debugAllReports,
+        'latest_report_id' => finrap_find_latest_report_id($company, $projectNo),
+        'points' => $points,
+        'y_max_percent' => $yMaxPercent,
+        'cost_breakdown' => finrap_build_latest_cost_breakdown($company, $projectNo),
+        'eac_breakdown' => finrap_build_latest_cost_breakdown($company, $projectNo, 'EAC'),
+        'invoiced_breakdown' => finrap_build_latest_cost_breakdown($company, $projectNo, 'Invoiced_Amount'),
+        'installments_history' => finrap_build_installments_received_history($company, $projectNo),
+    ];
+}
+
+function finrap_build_installments_received_history(string $company, string $projectNo): array
+{
+    $reports = finrap_list_report_snapshots($company, $projectNo);
+    if ($reports === []) {
+        return [];
+    }
+
+    $pointsByDay = [];
+    foreach (array_reverse($reports) as $reportEntry) {
+        if (!is_array($reportEntry)) {
+            continue;
+        }
+
+        $reportId = trim((string) ($reportEntry['report_id'] ?? ''));
+        if ($reportId === '') {
+            continue;
+        }
+
+        $chartDate = finrap_report_fetched_date((string) ($reportEntry['fetched_at'] ?? ''));
+        if ($chartDate === null) {
+            continue;
+        }
+
+        $payload = finrap_load_report_snapshot($company, $projectNo, $reportId);
+        if (!is_array($payload)) {
+            continue;
+        }
+
+        $modal = is_array($payload['project_modal'] ?? null) ? $payload['project_modal'] : [];
+        $pointsByDay[$chartDate] = [
+            'date' => $chartDate,
+            'report_id' => $reportId,
+            'auto_report' => finrap_is_auto_report($payload),
+            'amount' => round(finance_to_float($modal['installments_received'] ?? 0.0), 2),
+        ];
+    }
+
+    ksort($pointsByDay);
+
+    return array_values($pointsByDay);
+}
+
+function finrap_is_major_total_task_code(string $taskCode): bool
+{
+    return preg_match('/^\d{3}-000-000$/', trim($taskCode)) === 1;
+}
+
+function finrap_is_minor_total_task_code(string $taskCode): bool
+{
+    $code = trim($taskCode);
+    if (!preg_match('/^\d{3}-\d{3}-000$/', $code)) {
+        return false;
+    }
+
+    return !finrap_is_major_total_task_code($code);
+}
+
+function finrap_major_total_code_for_minor(string $minorCode): string
+{
+    if (!finrap_is_minor_total_task_code($minorCode)) {
+        return '';
+    }
+
+    $parts = explode('-', trim($minorCode));
+
+    return $parts[0] . '-000-000';
+}
+
+function finrap_load_latest_report_task_rows(string $company, string $projectNo): ?array
+{
+    $reportId = finrap_find_latest_report_id($company, $projectNo);
+    if ($reportId === null) {
+        return null;
+    }
+
+    $payload = finrap_load_report_snapshot($company, $projectNo, $reportId);
+    if (!is_array($payload)) {
+        return null;
+    }
+
+    $modal = is_array($payload['project_modal'] ?? null) ? $payload['project_modal'] : [];
+    $taskRows = is_array($modal['task_rows'] ?? null) ? $modal['task_rows'] : [];
+    $overrides = finrap_load_report_overrides($company, $projectNo, $reportId);
+    $eacOverrides = is_array($overrides['eac_by_task'] ?? null) ? $overrides['eac_by_task'] : [];
+    $taskRows = finrap_apply_eac_overrides_to_task_rows($taskRows, $eacOverrides);
+
+    return [
+        'report_id' => $reportId,
+        'fetched_at' => (string) ($payload['fetched_at'] ?? ''),
+        'auto_report' => finrap_is_auto_report($payload),
+        'task_rows' => $taskRows,
+    ];
+}
+
+function finrap_build_latest_cost_breakdown(string $company, string $projectNo, string $costField = 'Booked_Cost'): array
+{
+    $latest = finrap_load_latest_report_task_rows($company, $projectNo);
+    if (!is_array($latest)) {
+        return [
+            'report_id' => '',
+            'fetched_at' => '',
+            'auto_report' => false,
+            'cost_field' => $costField,
+            'major_totals' => [],
+            'total_amount' => 0.0,
+        ];
+    }
+
+    $epsilon = 0.000001;
+    $majorTotalsByCode = [];
+    $minorTotals = [];
+
+    foreach ($latest['task_rows'] as $taskRow) {
+        if (!is_array($taskRow) || !(bool) ($taskRow['Is_Total_Row'] ?? false)) {
+            continue;
+        }
+
+        $taskCode = trim((string) ($taskRow['Cost_Group_Code'] ?? ''));
+        if ($taskCode === '') {
+            continue;
+        }
+
+        $amount = finance_to_float($taskRow[$costField] ?? 0.0);
+        if (abs($amount) < $epsilon) {
+            continue;
+        }
+
+        if (finrap_is_major_total_task_code($taskCode)) {
+            $majorTotalsByCode[strtolower($taskCode)] = [
+                'code' => $taskCode,
+                'description' => trim((string) ($taskRow['Cost_Group_Description'] ?? '')),
+                'amount' => $amount,
+                'subtotals' => [],
+            ];
+            continue;
+        }
+
+        if (finrap_is_minor_total_task_code($taskCode)) {
+            $minorTotals[] = [
+                'code' => $taskCode,
+                'description' => trim((string) ($taskRow['Cost_Group_Description'] ?? '')),
+                'amount' => $amount,
+                'parent_code' => finrap_major_total_code_for_minor($taskCode),
+            ];
+        }
+    }
+
+    foreach ($minorTotals as $minorTotal) {
+        if (!is_array($minorTotal)) {
+            continue;
+        }
+
+        $parentCode = trim((string) ($minorTotal['parent_code'] ?? ''));
+        $parentKey = strtolower($parentCode);
+        if ($parentCode === '' || !isset($majorTotalsByCode[$parentKey])) {
+            continue;
+        }
+
+        $majorTotalsByCode[$parentKey]['subtotals'][] = [
+            'code' => (string) ($minorTotal['code'] ?? ''),
+            'description' => (string) ($minorTotal['description'] ?? ''),
+            'amount' => finance_to_float($minorTotal['amount'] ?? 0.0),
+        ];
+    }
+
+    $majorTotals = array_values($majorTotalsByCode);
+    usort($majorTotals, static function (array $left, array $right): int {
+        return strnatcasecmp((string) ($left['code'] ?? ''), (string) ($right['code'] ?? ''));
+    });
+
+    foreach ($majorTotals as &$majorTotal) {
+        if (!is_array($majorTotal) || !is_array($majorTotal['subtotals'] ?? null)) {
+            continue;
+        }
+
+        usort($majorTotal['subtotals'], static function (array $left, array $right): int {
+            return strnatcasecmp((string) ($left['code'] ?? ''), (string) ($right['code'] ?? ''));
+        });
+    }
+    unset($majorTotal);
+
+    $totalAmount = 0.0;
+    foreach ($majorTotals as $majorTotal) {
+        if (!is_array($majorTotal)) {
+            continue;
+        }
+
+        $totalAmount = finance_add_amount($totalAmount, finance_to_float($majorTotal['amount'] ?? 0.0));
+    }
+
+    return [
+        'report_id' => (string) ($latest['report_id'] ?? ''),
+        'fetched_at' => (string) ($latest['fetched_at'] ?? ''),
+        'auto_report' => (bool) ($latest['auto_report'] ?? false),
+        'cost_field' => $costField,
+        'major_totals' => $majorTotals,
+        'total_amount' => $totalAmount,
+    ];
 }
 
 function finrap_list_cached_months(string $company, string $projectNo): array
