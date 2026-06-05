@@ -316,6 +316,7 @@ if (!in_array($selectedCompany, $companies, true)) {
 $recentProjects = index_normalize_recent_projects(
 	is_array($userSettings['finrap_recent_projects'] ?? null) ? $userSettings['finrap_recent_projects'] : []
 );
+$showAutoReports = (bool) ($userSettings['finrap_show_auto_reports'] ?? false);
 
 if (($_GET['action'] ?? '') === 'save_company_preference') {
 	$company = trim((string) ($_POST['company'] ?? ''));
@@ -333,6 +334,23 @@ if (($_GET['action'] ?? '') === 'save_company_preference') {
 	index_json_response([
 		'ok' => true,
 		'company' => $company,
+	]);
+}
+
+if (($_GET['action'] ?? '') === 'save_auto_reports_preference') {
+	$showAutoReportsInput = trim((string) ($_POST['show_auto_reports'] ?? ''));
+	$showAutoReportsValue = $showAutoReportsInput === '1';
+
+	$settings = index_load_user_settings($userEmail);
+	$settings['finrap_show_auto_reports'] = $showAutoReportsValue;
+	$saveOk = index_save_user_settings($userEmail, $settings);
+	if (!$saveOk) {
+		index_json_response(['ok' => false, 'error' => LOC('error.save_preference_failed')], 500);
+	}
+
+	index_json_response([
+		'ok' => true,
+		'show_auto_reports' => $showAutoReportsValue,
 	]);
 }
 
@@ -459,7 +477,9 @@ $indexI18nKeys = [
 	'index.js.generate_label',
 	'index.js.generate_btn',
 	'index.js.reports_label',
+	'index.js.show_auto_reports',
 	'index.js.reports_empty',
+	'index.js.reports_empty_filtered',
 	'index.js.btn.open',
 	'index.js.report_modal_title',
 	'index.js.recent_empty',
@@ -641,7 +661,45 @@ $indexI18nKeys = [
 			padding: 8px 10px;
 			border: 1px solid #e2e8f0;
 			border-radius: 10px;
-			background: #fff;
+		}
+
+		.report-item.is-manual-report {
+			background: #f8fbff;
+			border-color: #d7e4f2;
+		}
+
+		.report-item.is-auto-report {
+			background: #e8e8e8;
+			border-color: #cccccc;
+		}
+
+		.reports-toolbar {
+			display: flex;
+			flex-wrap: wrap;
+			align-items: center;
+			justify-content: space-between;
+			gap: 10px 16px;
+			margin-top: 14px;
+		}
+
+		.auto-reports-toggle {
+			display: inline-flex;
+			align-items: center;
+			gap: 8px;
+			font-size: 13px;
+			color: var(--muted);
+			cursor: pointer;
+			user-select: none;
+		}
+
+		.auto-reports-toggle input[type="checkbox"] {
+			width: 16px;
+			height: 16px;
+			min-height: 0;
+			margin: 0;
+			padding: 0;
+			flex: 0 0 auto;
+			accent-color: var(--brand);
 		}
 
 		.report-item-meta {
@@ -651,8 +709,14 @@ $indexI18nKeys = [
 
 		.report-item-actions {
 			display: flex;
+			align-items: center;
 			gap: 6px;
 			flex-shrink: 0;
+		}
+
+		.report-auto-badge {
+			font-size: 16px;
+			line-height: 1;
 		}
 
 		.btn-danger-icon {
@@ -1137,6 +1201,7 @@ $indexI18nKeys = [
 			const i18n = <?= localizationJsTranslations($indexI18nKeys) ?>;
 			const dateLocale = <?= json_encode(getDateLocale(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
 			const initialRecentProjects = <?= json_encode($recentProjects, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
+			const initialShowAutoReports = <?= $showAutoReports ? 'true' : 'false' ?>;
 			const companySelect = document.getElementById('companySelect');
 			const projectInput = document.getElementById('projectInput');
 			const findBtn = document.getElementById('findBtn');
@@ -1167,6 +1232,8 @@ $indexI18nKeys = [
 			let recentProjects = Array.isArray(initialRecentProjects) ? initialRecentProjects : [];
 			let pendingDeleteReportId = '';
 			let currentProjectData = null;
+			let currentReports = [];
+			let showAutoReports = initialShowAutoReports === true;
 
 			function postForm (url, body)
 			{
@@ -1447,21 +1514,52 @@ $indexI18nKeys = [
 				confirmDeleteStep1.classList.add('is-visible');
 			}
 
+			function saveAutoReportsPreference (enabled)
+			{
+				postForm('index.php?action=save_auto_reports_preference', {
+					show_auto_reports: enabled ? '1' : '0'
+				}).catch(function ()
+				{
+					// Preference save failure should not block UI filtering.
+				});
+			}
+
+			function getVisibleReports (reports)
+			{
+				const list = Array.isArray(reports) ? reports : [];
+				if (showAutoReports)
+				{
+					return list;
+				}
+
+				return list.filter(function (entry)
+				{
+					return !(entry && entry.auto_report === true);
+				});
+			}
+
 			function renderReportList (container, reports)
 			{
 				container.innerHTML = '';
 				const list = Array.isArray(reports) ? reports : [];
+				const visibleReports = getVisibleReports(list);
 
-				if (list.length === 0)
+				if (visibleReports.length === 0)
 				{
 					const empty = document.createElement('li');
 					empty.className = 'muted';
-					empty.textContent = i18n['index.js.reports_empty'];
+					const hasHiddenAutoReports = !showAutoReports && list.some(function (entry)
+					{
+						return entry && entry.auto_report === true;
+					});
+					empty.textContent = hasHiddenAutoReports
+						? i18n['index.js.reports_empty_filtered']
+						: i18n['index.js.reports_empty'];
 					container.appendChild(empty);
 					return;
 				}
 
-				list.forEach(function (entry)
+				visibleReports.forEach(function (entry)
 				{
 					const reportId = String((entry && entry.report_id) || '').trim();
 					if (reportId === '')
@@ -1470,7 +1568,7 @@ $indexI18nKeys = [
 					}
 
 					const item = document.createElement('li');
-					item.className = 'report-item';
+					item.className = 'report-item ' + (entry.auto_report === true ? 'is-auto-report' : 'is-manual-report');
 
 					const meta = document.createElement('div');
 					meta.className = 'report-item-meta';
@@ -1478,6 +1576,15 @@ $indexI18nKeys = [
 
 					const actions = document.createElement('div');
 					actions.className = 'report-item-actions';
+
+					if (entry.auto_report === true)
+					{
+						const autoBadge = document.createElement('span');
+						autoBadge.className = 'report-auto-badge';
+						autoBadge.textContent = '🤖';
+						autoBadge.setAttribute('aria-hidden', 'true');
+						actions.appendChild(autoBadge);
+					}
 
 					const openBtn = document.createElement('button');
 					openBtn.className = 'btn btn-open';
@@ -1643,6 +1750,7 @@ $indexI18nKeys = [
 				const no = String((project && project.No) || activeProjectNo || '').trim();
 				currentProjectData = project || {};
 				activeProjectNo = no;
+				currentReports = Array.isArray(reports) ? reports : [];
 				projectArea.innerHTML = '';
 
 				const card = document.createElement('div');
@@ -1674,15 +1782,33 @@ $indexI18nKeys = [
 				generateBtn.textContent = i18n['index.js.generate_btn'];
 				card.appendChild(generateBtn);
 
+				const reportsToolbar = document.createElement('div');
+				reportsToolbar.className = 'reports-toolbar';
+
 				const reportsLabel = document.createElement('label');
 				reportsLabel.textContent = i18n['index.js.reports_label'];
-				reportsLabel.style.marginTop = '14px';
-				card.appendChild(reportsLabel);
+				reportsToolbar.appendChild(reportsLabel);
+
+				const autoReportsToggle = document.createElement('label');
+				autoReportsToggle.className = 'auto-reports-toggle';
+				const autoReportsCheckbox = document.createElement('input');
+				autoReportsCheckbox.type = 'checkbox';
+				autoReportsCheckbox.checked = showAutoReports;
+				autoReportsCheckbox.addEventListener('change', function ()
+				{
+					showAutoReports = autoReportsCheckbox.checked;
+					saveAutoReportsPreference(showAutoReports);
+					renderReportList(reportList, currentReports);
+				});
+				autoReportsToggle.appendChild(autoReportsCheckbox);
+				autoReportsToggle.appendChild(document.createTextNode(i18n['index.js.show_auto_reports']));
+				reportsToolbar.appendChild(autoReportsToggle);
+				card.appendChild(reportsToolbar);
 
 				const reportList = document.createElement('ul');
 				reportList.className = 'report-list';
 				card.appendChild(reportList);
-				renderReportList(reportList, reports);
+				renderReportList(reportList, currentReports);
 
 				generateBtn.addEventListener('click', function ()
 				{

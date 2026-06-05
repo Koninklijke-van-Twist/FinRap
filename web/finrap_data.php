@@ -338,6 +338,7 @@ function finrap_list_report_snapshots(string $company, string $projectNo): array
         $result[] = [
             'report_id' => $reportId,
             'fetched_at' => is_array($payload) ? (string) ($payload['fetched_at'] ?? '') : '',
+            'auto_report' => finrap_is_auto_report(is_array($payload) ? $payload : []),
         ];
     }
 
@@ -346,6 +347,128 @@ function finrap_list_report_snapshots(string $company, string $projectNo): array
     });
 
     return $result;
+}
+
+function finrap_is_auto_report(array $payload): bool
+{
+    return ($payload['auto_report'] ?? false) === true;
+}
+
+function finrap_list_nightly_report_targets(): array
+{
+    $dir = finrap_cache_dir();
+    $entries = @scandir($dir);
+    if (!is_array($entries)) {
+        return [];
+    }
+
+    $projectsByKey = [];
+    foreach ($entries as $entry) {
+        if (!is_string($entry) || !str_contains($entry, '_ts_') || !str_ends_with($entry, '.json') || str_ends_with($entry, '-overrides.json')) {
+            continue;
+        }
+
+        $path = $dir . DIRECTORY_SEPARATOR . $entry;
+        $raw = @file_get_contents($path);
+        if (!is_string($raw) || trim($raw) === '') {
+            continue;
+        }
+
+        $payload = json_decode($raw, true);
+        if (!is_array($payload)) {
+            continue;
+        }
+
+        $company = trim((string) ($payload['company'] ?? ''));
+        $projectNo = trim((string) ($payload['project_no'] ?? ''));
+        if ($company === '' || $projectNo === '') {
+            continue;
+        }
+
+        $projectKey = strtolower($company) . '|' . strtolower($projectNo);
+        if (!isset($projectsByKey[$projectKey])) {
+            $projectsByKey[$projectKey] = [
+                'company' => $company,
+                'project_no' => $projectNo,
+                'has_manual_report' => false,
+            ];
+        }
+
+        if (!finrap_is_auto_report($payload)) {
+            $projectsByKey[$projectKey]['has_manual_report'] = true;
+        }
+    }
+
+    $targets = [];
+    foreach ($projectsByKey as $projectEntry) {
+        if (!is_array($projectEntry) || !(bool) ($projectEntry['has_manual_report'] ?? false)) {
+            continue;
+        }
+
+        $targets[] = [
+            'company' => (string) ($projectEntry['company'] ?? ''),
+            'project_no' => (string) ($projectEntry['project_no'] ?? ''),
+        ];
+    }
+
+    usort($targets, static function (array $left, array $right): int {
+        $leftKey = strtolower((string) ($left['company'] ?? '')) . '|' . strtolower((string) ($left['project_no'] ?? ''));
+        $rightKey = strtolower((string) ($right['company'] ?? '')) . '|' . strtolower((string) ($right['project_no'] ?? ''));
+
+        return strcmp($leftKey, $rightKey);
+    });
+
+    return $targets;
+}
+
+function finrap_run_nightly_reports(): array
+{
+    $targets = finrap_list_nightly_report_targets();
+    $yearMonth = gmdate('Y-m');
+    $results = [];
+
+    foreach ($targets as $target) {
+        if (!is_array($target)) {
+            continue;
+        }
+
+        $company = trim((string) ($target['company'] ?? ''));
+        $projectNo = trim((string) ($target['project_no'] ?? ''));
+        if ($company === '' || $projectNo === '') {
+            continue;
+        }
+
+        $startedAt = hrtime(true);
+        try {
+            $report = finrap_generate_month_for_project($company, $projectNo, $yearMonth);
+            $resolvedProjectNo = trim((string) ($report['project_no'] ?? $projectNo));
+            $report['auto_report'] = true;
+            $reportId = finrap_save_report_snapshot($company, $resolvedProjectNo, $report);
+            if (!is_string($reportId) || $reportId === '') {
+                throw new RuntimeException('Rapport opslaan mislukt.');
+            }
+
+            finrap_inherit_overrides_from_previous_report($company, $resolvedProjectNo, $reportId);
+
+            $results[] = [
+                'ok' => true,
+                'company' => $company,
+                'project_no' => $resolvedProjectNo,
+                'report_id' => $reportId,
+                'duration_ms' => (int) round((hrtime(true) - $startedAt) / 1_000_000),
+            ];
+        } catch (Throwable $error) {
+            $results[] = [
+                'ok' => false,
+                'company' => $company,
+                'project_no' => $projectNo,
+                'duration_ms' => (int) round((hrtime(true) - $startedAt) / 1_000_000),
+                'error' => $error->getMessage(),
+            ];
+        }
+    }
+
+    return $results;
 }
 
 function finrap_list_cached_months(string $company, string $projectNo): array
