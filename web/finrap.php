@@ -1738,7 +1738,6 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                                     </th>
                                     <th class="is-right" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.gross_profit'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.gross_profit'), ENT_QUOTES) ?>
                                     </th>
-                                    <th class="is-right" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.col.eac'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.col.eac'), ENT_QUOTES) ?></th>
                                     <th class="is-right" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.col.booked_cost'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.col.booked_cost'), ENT_QUOTES) ?></th>
                                     <th class="is-right" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.col.entered_obligations'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.col.entered_obligations'), ENT_QUOTES) ?></th>
                                     <th class="is-right" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.variance'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.variance'), ENT_QUOTES) ?></th>
@@ -1760,9 +1759,6 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                                     </td>
                                     <td class="is-right <?= finrap_currency_sign_class($grossProfit) ?>" id="metricGrossProfit">
                                         <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($grossProfit)), $tooltipGrossProfit) ?>
-                                    </td>
-                                    <td class="is-right <?= finrap_currency_sign_class($eacTotal) ?>" id="metricEac">
-                                        <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($eacTotal)), finrap_cost_group_value_tooltip_html('EAC')) ?>
                                     </td>
                                     <td class="is-right <?= finrap_currency_sign_class($bookedCostTotal) ?>" id="metricBookedCost">
                                         <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($bookedCostTotal)), finrap_cost_group_value_tooltip_html('Booked_Cost')) ?>
@@ -2337,7 +2333,6 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                     const expVariance = budgetCost - eac;
 
                     updateMetricCell('metricBudgetCost', budgetCost);
-                    updateMetricCell('metricEac', eac);
                     updateMetricCell('metricBookedCost', bookedCost);
                     updateMetricCell('metricObligations', obligations);
                     updateMetricCell('metricVariance', variance);

@@ -12,6 +12,7 @@ header('Content-Type: application/json; charset=utf-8');
 
 $startedAt = hrtime(true);
 $results = finrap_run_nightly_reports();
+finrap_refresh_report_indexes_for_nightly_results($results);
 $projects = [];
 
 foreach ($results as $result) {

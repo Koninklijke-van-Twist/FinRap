@@ -26,10 +26,39 @@ const FINRAP_BUDGET_HOURS_FILTER_UOM_VALUE = 'HR';
 
 const FINRAP_ESTIMATED_HOURS_ENTITY_SET = '';
 const FINRAP_ESTIMATED_HOURS_FIELD = '';
+const FINRAP_REPORT_LIST_PAGE_SIZE = 25;
 
 /**
  * Functies
  */
+function finrap_write_json_file(string $path, array $payload, int $jsonFlags = JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT): bool
+{
+    $json = json_encode($payload, $jsonFlags);
+    if (!is_string($json)) {
+        return false;
+    }
+
+    $directory = dirname($path);
+    if (!is_dir($directory) && !@mkdir($directory, 0777, true) && !is_dir($directory)) {
+        return false;
+    }
+
+    $tmpPath = $path . '.tmp';
+    if (file_put_contents($tmpPath, $json, LOCK_EX) === false) {
+        @unlink($tmpPath);
+
+        return false;
+    }
+
+    if (!@rename($tmpPath, $path)) {
+        @unlink($tmpPath);
+
+        return false;
+    }
+
+    return true;
+}
+
 function finrap_cache_dir(): string
 {
     $dir = __DIR__ . DIRECTORY_SEPARATOR . 'cache' . DIRECTORY_SEPARATOR . 'finrap';
@@ -88,6 +117,492 @@ function finrap_report_cache_path(string $company, string $projectNo, string $re
     return finrap_cache_dir() . DIRECTORY_SEPARATOR . $safeCompany . '_' . $safeProject . '_ts_' . $safeReportId . '.json';
 }
 
+function finrap_report_snapshot_file_prefix(string $company, string $projectNo): string
+{
+    $safeCompany = finrap_normalize_company($company);
+    $safeProject = preg_replace('/[^a-z0-9_-]/i', '_', finrap_normalize_project_no($projectNo));
+
+    return $safeCompany . '_' . $safeProject . '_ts_';
+}
+
+function finrap_report_index_path(string $company, string $projectNo): string
+{
+    $safeCompany = finrap_normalize_company($company);
+    $safeProject = preg_replace('/[^a-z0-9_-]/i', '_', finrap_normalize_project_no($projectNo));
+
+    return finrap_cache_dir() . DIRECTORY_SEPARATOR . $safeCompany . '_' . $safeProject . '_reports-index.json';
+}
+
+function finrap_report_index_entry_from_payload(string $company, string $projectNo, string $reportId, array $payload): array
+{
+    $modal = is_array($payload['project_modal'] ?? null) ? $payload['project_modal'] : [];
+    $taskRows = is_array($modal['task_rows'] ?? null) ? $modal['task_rows'] : [];
+    $overrides = finrap_load_report_overrides($company, $projectNo, $reportId);
+    $eacOverrides = is_array($overrides['eac_by_task'] ?? null) ? $overrides['eac_by_task'] : [];
+    $taskRows = finrap_apply_eac_overrides_to_task_rows($taskRows, $eacOverrides);
+    $summaryTotals = finrap_get_report_summary_totals($taskRows);
+    $bookedCost = finance_to_float($summaryTotals['Booked_Cost'] ?? 0.0);
+    $budgetCost = finance_to_float($summaryTotals['Budget_Cost'] ?? 0.0);
+    $eacTotal = finance_to_float($summaryTotals['EAC'] ?? 0.0);
+
+    return [
+        'report_id' => $reportId,
+        'fetched_at' => (string) ($payload['fetched_at'] ?? ''),
+        'auto_report' => finrap_is_auto_report($payload),
+        'created_by' => finrap_email_local_part((string) ($payload['created_by_email'] ?? '')),
+        'installments_received' => round(finance_to_float($modal['installments_received'] ?? 0.0), 2),
+        'poc_baseline' => round(finrap_calculate_poc_percent($bookedCost, $budgetCost), 2),
+        'poc_eac' => round(finrap_calculate_poc_percent($bookedCost, $eacTotal), 2),
+    ];
+}
+
+function finrap_sort_report_index_entries(array $entries): array
+{
+    usort($entries, static function (array $left, array $right): int {
+        return strcmp((string) ($right['fetched_at'] ?? ''), (string) ($left['fetched_at'] ?? ''));
+    });
+
+    return $entries;
+}
+
+function finrap_load_report_index(string $company, string $projectNo): ?array
+{
+    $path = finrap_report_index_path($company, $projectNo);
+    if (!is_file($path)) {
+        return null;
+    }
+
+    $raw = @file_get_contents($path);
+    if (!is_string($raw) || trim($raw) === '') {
+        return null;
+    }
+
+    $decoded = json_decode($raw, true);
+    if (!is_array($decoded) || !is_array($decoded['reports'] ?? null)) {
+        return null;
+    }
+
+    $decoded['reports'] = finrap_sort_report_index_entries($decoded['reports']);
+
+    return $decoded;
+}
+
+function finrap_save_report_index(string $company, string $projectNo, array $reports): bool
+{
+    $path = finrap_report_index_path($company, $projectNo);
+    $payload = [
+        'version' => 1,
+        'updated_at' => gmdate('c'),
+        'reports' => finrap_sort_report_index_entries(array_values($reports)),
+    ];
+
+    return finrap_write_json_file($path, $payload);
+}
+
+function finrap_count_report_snapshot_files(string $company, string $projectNo): int
+{
+    $dir = finrap_cache_dir();
+    $prefix = finrap_report_snapshot_file_prefix($company, $projectNo);
+    $entries = @scandir($dir);
+    if (!is_array($entries)) {
+        return 0;
+    }
+
+    $count = 0;
+    foreach ($entries as $entry) {
+        if (!str_starts_with($entry, $prefix) || !str_ends_with($entry, '.json') || str_ends_with($entry, '-overrides.json')) {
+            continue;
+        }
+
+        $reportId = substr($entry, strlen($prefix), -5);
+        if (preg_match('/^[a-z0-9_-]+$/i', $reportId)) {
+            $count++;
+        }
+    }
+
+    return $count;
+}
+
+function finrap_rebuild_report_index(string $company, string $projectNo): bool
+{
+    $dir = finrap_cache_dir();
+    $prefix = finrap_report_snapshot_file_prefix($company, $projectNo);
+    $entries = @scandir($dir);
+    if (!is_array($entries)) {
+        return finrap_save_report_index($company, $projectNo, []);
+    }
+
+    $reports = [];
+    foreach ($entries as $entry) {
+        if (!str_starts_with($entry, $prefix) || !str_ends_with($entry, '.json') || str_ends_with($entry, '-overrides.json')) {
+            continue;
+        }
+
+        $reportId = substr($entry, strlen($prefix), -5);
+        if (!preg_match('/^[a-z0-9_-]+$/i', $reportId)) {
+            continue;
+        }
+
+        $payload = finrap_load_report_snapshot($company, $projectNo, $reportId);
+        if (!is_array($payload)) {
+            continue;
+        }
+
+        $reports[] = finrap_report_index_entry_from_payload($company, $projectNo, $reportId, $payload);
+    }
+
+    return finrap_save_report_index($company, $projectNo, $reports);
+}
+
+function finrap_upsert_report_index_entry(string $company, string $projectNo, string $reportId, array $payload): bool
+{
+    $reportId = trim($reportId);
+    if ($reportId === '') {
+        return false;
+    }
+
+    $index = finrap_load_report_index($company, $projectNo);
+    $reports = is_array($index['reports'] ?? null) ? $index['reports'] : [];
+    $normalizedReportId = strtolower($reportId);
+    $reportsById = [];
+
+    foreach ($reports as $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+
+        $entryReportId = strtolower(trim((string) ($entry['report_id'] ?? '')));
+        if ($entryReportId === '') {
+            continue;
+        }
+
+        $reportsById[$entryReportId] = $entry;
+    }
+
+    $reportsById[$normalizedReportId] = finrap_report_index_entry_from_payload($company, $projectNo, $reportId, $payload);
+
+    return finrap_save_report_index($company, $projectNo, array_values($reportsById));
+}
+
+function finrap_refresh_report_index_entry(string $company, string $projectNo, string $reportId): bool
+{
+    $reportId = trim($reportId);
+    if ($reportId === '') {
+        return false;
+    }
+
+    $payload = finrap_load_report_snapshot($company, $projectNo, $reportId);
+    if (!is_array($payload)) {
+        return false;
+    }
+
+    return finrap_upsert_report_index_entry($company, $projectNo, $reportId, $payload);
+}
+
+function finrap_dashboard_cache_path(string $company, string $projectNo): string
+{
+    $safeCompany = finrap_normalize_company($company);
+    $safeProject = preg_replace('/[^a-z0-9_-]/i', '_', finrap_normalize_project_no($projectNo));
+
+    return finrap_cache_dir() . DIRECTORY_SEPARATOR . $safeCompany . '_' . $safeProject . '_dashboard-cache.json';
+}
+
+function finrap_load_dashboard_cache(string $company, string $projectNo): ?array
+{
+    $path = finrap_dashboard_cache_path($company, $projectNo);
+    if (!is_file($path)) {
+        return null;
+    }
+
+    $raw = @file_get_contents($path);
+    if (!is_string($raw) || trim($raw) === '') {
+        return null;
+    }
+
+    $decoded = json_decode($raw, true);
+
+    return is_array($decoded) ? $decoded : null;
+}
+
+function finrap_is_dashboard_cache_current(string $company, string $projectNo, ?array $cache): bool
+{
+    if (!is_array($cache) || !is_array($cache['dashboard'] ?? null)) {
+        return false;
+    }
+
+    $index = finrap_load_report_index($company, $projectNo);
+    if (!is_array($index)) {
+        return false;
+    }
+
+    $latestReportId = finrap_find_latest_report_id($company, $projectNo);
+    if ($latestReportId === null) {
+        return false;
+    }
+
+    return strcasecmp((string) ($cache['source_latest_report_id'] ?? ''), $latestReportId) === 0
+        && (string) ($cache['source_index_updated_at'] ?? '') === (string) ($index['updated_at'] ?? '');
+}
+
+function finrap_save_dashboard_cache(string $company, string $projectNo, array $dashboard, array $index): bool
+{
+    $latestReportId = finrap_find_latest_report_id($company, $projectNo);
+    $payload = [
+        'version' => 1,
+        'updated_at' => gmdate('c'),
+        'source_latest_report_id' => $latestReportId ?? '',
+        'source_index_updated_at' => (string) ($index['updated_at'] ?? ''),
+        'dashboard' => $dashboard,
+    ];
+
+    return finrap_write_json_file(finrap_dashboard_cache_path($company, $projectNo), $payload);
+}
+
+function finrap_delete_dashboard_cache(string $company, string $projectNo): bool
+{
+    $path = finrap_dashboard_cache_path($company, $projectNo);
+    if (!is_file($path)) {
+        return true;
+    }
+
+    return @unlink($path);
+}
+
+function finrap_report_index_entries_by_report_id(?array $index): array
+{
+    if (!is_array($index)) {
+        return [];
+    }
+
+    $entriesByReportId = [];
+    foreach ($index['reports'] ?? [] as $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+
+        $reportId = strtolower(trim((string) ($entry['report_id'] ?? '')));
+        if ($reportId === '') {
+            continue;
+        }
+
+        $entriesByReportId[$reportId] = $entry;
+    }
+
+    return $entriesByReportId;
+}
+
+function finrap_project_report_entries_from_index(?array $index): array
+{
+    if (!is_array($index)) {
+        return [];
+    }
+
+    $entries = [];
+    foreach ($index['reports'] ?? [] as $reportEntry) {
+        if (!is_array($reportEntry)) {
+            continue;
+        }
+
+        $reportId = trim((string) ($reportEntry['report_id'] ?? ''));
+        if ($reportId === '') {
+            continue;
+        }
+
+        $entries[] = [
+            'report_id' => $reportId,
+            'fetched_at' => (string) ($reportEntry['fetched_at'] ?? ''),
+            'auto_report' => (bool) ($reportEntry['auto_report'] ?? false),
+        ];
+    }
+
+    usort($entries, static function (array $left, array $right): int {
+        return strcmp((string) ($left['fetched_at'] ?? ''), (string) ($right['fetched_at'] ?? ''));
+    });
+
+    return $entries;
+}
+
+function finrap_build_dashboard_poc_points_from_index(string $company, string $projectNo, ?array $index = null): array
+{
+    if ($index === null) {
+        $index = finrap_load_report_index($company, $projectNo);
+    }
+
+    $entries = finrap_project_report_entries_from_index($index);
+    $selected = finrap_select_dashboard_report_entries($entries, false);
+    $indexEntries = finrap_report_index_entries_by_report_id($index);
+    $points = [];
+
+    foreach ($selected as $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+
+        $reportId = trim((string) ($entry['report_id'] ?? ''));
+        if ($reportId === '') {
+            continue;
+        }
+
+        $chartDate = finrap_report_fetched_date((string) ($entry['fetched_at'] ?? ''));
+        if ($chartDate === null) {
+            continue;
+        }
+
+        $indexEntry = $indexEntries[strtolower($reportId)] ?? null;
+        if (is_array($indexEntry) && isset($indexEntry['poc_baseline'], $indexEntry['poc_eac'])) {
+            $points[] = [
+                'date' => $chartDate,
+                'report_id' => $reportId,
+                'auto_report' => (bool) ($entry['auto_report'] ?? false),
+                'poc_baseline' => round(finance_to_float($indexEntry['poc_baseline'] ?? 0.0), 2),
+                'poc_eac' => round(finance_to_float($indexEntry['poc_eac'] ?? 0.0), 2),
+            ];
+            continue;
+        }
+
+        $metrics = finrap_compute_report_poc_metrics($company, $projectNo, $reportId);
+        if (!is_array($metrics)) {
+            continue;
+        }
+
+        $points[] = [
+            'date' => $chartDate,
+            'report_id' => $reportId,
+            'auto_report' => (bool) ($entry['auto_report'] ?? false),
+            'poc_baseline' => round(finance_to_float($metrics['poc_baseline'] ?? 0.0), 2),
+            'poc_eac' => round(finance_to_float($metrics['poc_eac'] ?? 0.0), 2),
+        ];
+    }
+
+    return $points;
+}
+
+function finrap_build_project_dashboard_core(string $company, string $projectNo, ?array $index = null): array
+{
+    if ($index === null) {
+        finrap_reconcile_report_index($company, $projectNo);
+        $index = finrap_load_report_index($company, $projectNo);
+    }
+
+    $points = finrap_build_dashboard_poc_points_from_index($company, $projectNo, $index);
+    $yMaxPercent = 100.0;
+    foreach ($points as $point) {
+        if (!is_array($point)) {
+            continue;
+        }
+
+        $yMaxPercent = max(
+            $yMaxPercent,
+            finance_to_float($point['poc_baseline'] ?? 0.0),
+            finance_to_float($point['poc_eac'] ?? 0.0)
+        );
+    }
+
+    return [
+        'latest_report_id' => finrap_find_latest_report_id($company, $projectNo) ?? '',
+        'points' => $points,
+        'y_max_percent' => $yMaxPercent,
+        'cost_breakdown' => finrap_build_latest_cost_breakdown($company, $projectNo),
+        'eac_breakdown' => finrap_build_latest_cost_breakdown($company, $projectNo, 'EAC'),
+        'invoiced_breakdown' => finrap_build_latest_cost_breakdown($company, $projectNo, 'Invoiced_Amount'),
+        'installments_history' => finrap_build_installments_received_history($company, $projectNo, $index),
+    ];
+}
+
+function finrap_refresh_dashboard_cache(string $company, string $projectNo): bool
+{
+    finrap_reconcile_report_index($company, $projectNo);
+    $index = finrap_load_report_index($company, $projectNo);
+    if (!is_array($index)) {
+        return finrap_delete_dashboard_cache($company, $projectNo);
+    }
+
+    $dashboard = finrap_build_project_dashboard_core($company, $projectNo, $index);
+
+    return finrap_save_dashboard_cache($company, $projectNo, $dashboard, $index);
+}
+
+function finrap_refresh_dashboard_cache_if_latest(string $company, string $projectNo, string $reportId): void
+{
+    if (!finrap_is_latest_report($company, $projectNo, $reportId)) {
+        return;
+    }
+
+    finrap_refresh_dashboard_cache($company, $projectNo);
+}
+
+function finrap_remove_report_index_entry(string $company, string $projectNo, string $reportId): bool
+{
+    $reportId = trim($reportId);
+    if ($reportId === '') {
+        return false;
+    }
+
+    $index = finrap_load_report_index($company, $projectNo);
+    if (!is_array($index)) {
+        return true;
+    }
+
+    $reports = is_array($index['reports'] ?? null) ? $index['reports'] : [];
+    $filtered = array_values(array_filter($reports, static function (array $entry) use ($reportId): bool {
+        return strcasecmp(trim((string) ($entry['report_id'] ?? '')), $reportId) !== 0;
+    }));
+
+    if (count($filtered) === count($reports)) {
+        return true;
+    }
+
+    return finrap_save_report_index($company, $projectNo, $filtered);
+}
+
+function finrap_reconcile_report_index(string $company, string $projectNo): bool
+{
+    $index = finrap_load_report_index($company, $projectNo);
+    $fileCount = finrap_count_report_snapshot_files($company, $projectNo);
+    $indexCount = is_array($index['reports'] ?? null) ? count($index['reports']) : 0;
+    $needsMetricRebuild = false;
+
+    if (is_array($index['reports'] ?? null)) {
+        foreach ($index['reports'] as $entry) {
+            if (!is_array($entry) || !array_key_exists('poc_baseline', $entry)) {
+                $needsMetricRebuild = true;
+                break;
+            }
+        }
+    }
+
+    if ($index === null || $indexCount !== $fileCount || $needsMetricRebuild) {
+        return finrap_rebuild_report_index($company, $projectNo);
+    }
+
+    return true;
+}
+
+function finrap_refresh_report_indexes_for_nightly_results(array $results): void
+{
+    $seen = [];
+    foreach ($results as $result) {
+        if (!is_array($result) || !($result['ok'] ?? false)) {
+            continue;
+        }
+
+        $company = trim((string) ($result['company'] ?? ''));
+        $projectNo = trim((string) ($result['project_no'] ?? ''));
+        if ($company === '' || $projectNo === '') {
+            continue;
+        }
+
+        $key = finrap_normalize_company($company) . '|' . finrap_normalize_project_no($projectNo);
+        if (isset($seen[$key])) {
+            continue;
+        }
+
+        $seen[$key] = true;
+        finrap_reconcile_report_index($company, $projectNo);
+        finrap_refresh_dashboard_cache($company, $projectNo);
+    }
+}
+
 function finrap_report_overrides_path(string $company, string $projectNo, string $reportId): string
 {
     $reportPath = finrap_report_cache_path($company, $projectNo, $reportId);
@@ -128,7 +643,13 @@ function finrap_save_report_overrides(string $company, string $projectNo, string
         return false;
     }
 
-    return file_put_contents($path, $json, LOCK_EX) !== false;
+    $saved = file_put_contents($path, $json, LOCK_EX) !== false;
+    if ($saved) {
+        finrap_refresh_report_index_entry($company, $projectNo, $reportId);
+        finrap_refresh_dashboard_cache_if_latest($company, $projectNo, $reportId);
+    }
+
+    return $saved;
 }
 
 function finrap_report_has_overrides(array $overrides): bool
@@ -140,7 +661,13 @@ function finrap_report_has_overrides(array $overrides): bool
 
 function finrap_find_latest_report_id(string $company, string $projectNo): ?string
 {
-    $reports = finrap_list_report_snapshots($company, $projectNo);
+    $index = finrap_load_report_index($company, $projectNo);
+    if (!is_array($index)) {
+        finrap_reconcile_report_index($company, $projectNo);
+        $index = finrap_load_report_index($company, $projectNo);
+    }
+
+    $reports = is_array($index['reports'] ?? null) ? $index['reports'] : [];
     if ($reports === []) {
         return null;
     }
@@ -219,7 +746,13 @@ function finrap_inherit_overrides_from_previous_report(string $company, string $
         return false;
     }
 
-    return finrap_copy_report_overrides($company, $projectNo, $previousReportId, $newReportId);
+    $copied = finrap_copy_report_overrides($company, $projectNo, $previousReportId, $newReportId);
+    if ($copied) {
+        finrap_refresh_report_index_entry($company, $projectNo, $newReportId);
+        finrap_refresh_dashboard_cache($company, $projectNo);
+    }
+
+    return $copied;
 }
 
 function finrap_delete_report_overrides(string $company, string $projectNo, string $reportId): bool
@@ -289,6 +822,11 @@ function finrap_save_report_snapshot(string $company, string $projectNo, array $
     }
 
     $ok = file_put_contents($path, $json, LOCK_EX) !== false;
+    if ($ok) {
+        finrap_upsert_report_index_entry($company, $projectNo, $finalReportId, $payload);
+        finrap_refresh_dashboard_cache($company, $projectNo);
+    }
+
     return $ok ? $finalReportId : null;
 }
 
@@ -318,48 +856,96 @@ function finrap_delete_report_snapshot(string $company, string $projectNo, strin
     $deleted = @unlink($path);
     if ($deleted) {
         finrap_delete_report_overrides($company, $projectNo, $reportId);
+        finrap_remove_report_index_entry($company, $projectNo, $reportId);
+        finrap_refresh_dashboard_cache($company, $projectNo);
     }
 
     return $deleted;
 }
 
-function finrap_list_report_snapshots(string $company, string $projectNo): array
+function finrap_ensure_report_index(string $company, string $projectNo, bool $reconcile = true): ?array
 {
-    $dir = finrap_cache_dir();
-    $safeCompany = finrap_normalize_company($company);
-    $safeProject = preg_replace('/[^a-z0-9_-]/i', '_', finrap_normalize_project_no($projectNo));
-    $prefix = $safeCompany . '_' . $safeProject . '_ts_';
+    if ($reconcile) {
+        finrap_reconcile_report_index($company, $projectNo);
+    } elseif (!is_file(finrap_report_index_path($company, $projectNo))) {
+        finrap_reconcile_report_index($company, $projectNo);
+    }
 
-    $entries = @scandir($dir);
-    if (!is_array($entries)) {
+    return finrap_load_report_index($company, $projectNo);
+}
+
+function finrap_report_snapshot_rows_from_index(?array $index, bool $includeAutoReports = true): array
+{
+    if (!is_array($index)) {
         return [];
     }
 
-    $result = [];
-    foreach ($entries as $entry) {
-        if (!str_starts_with($entry, $prefix) || !str_ends_with($entry, '.json') || str_ends_with($entry, '-overrides.json')) {
-            continue;
-        }
-
-        $reportId = substr($entry, strlen($prefix), -5);
-        if (!preg_match('/^[a-z0-9_-]+$/i', $reportId)) {
-            continue;
-        }
-
-        $payload = finrap_load_report_snapshot($company, $projectNo, $reportId);
-        $result[] = [
-            'report_id' => $reportId,
-            'fetched_at' => is_array($payload) ? (string) ($payload['fetched_at'] ?? '') : '',
-            'auto_report' => finrap_is_auto_report(is_array($payload) ? $payload : []),
-            'created_by' => finrap_email_local_part(is_array($payload) ? (string) ($payload['created_by_email'] ?? '') : ''),
+    $entries = is_array($index['reports'] ?? null) ? $index['reports'] : [];
+    $rows = array_map(static function (array $entry): array {
+        return [
+            'report_id' => (string) ($entry['report_id'] ?? ''),
+            'fetched_at' => (string) ($entry['fetched_at'] ?? ''),
+            'auto_report' => (bool) ($entry['auto_report'] ?? false),
+            'created_by' => (string) ($entry['created_by'] ?? ''),
         ];
+    }, $entries);
+
+    if (!$includeAutoReports) {
+        $rows = array_values(array_filter($rows, static function (array $entry): bool {
+            return !($entry['auto_report'] ?? false);
+        }));
     }
 
-    usort($result, static function (array $left, array $right): int {
-        return strcmp((string) ($right['fetched_at'] ?? ''), (string) ($left['fetched_at'] ?? ''));
-    });
+    return $rows;
+}
 
-    return $result;
+function finrap_count_report_snapshots(string $company, string $projectNo, bool $includeAutoReports = true, bool $reconcile = true): int
+{
+    $index = finrap_ensure_report_index($company, $projectNo, $reconcile);
+
+    return count(finrap_report_snapshot_rows_from_index($index, $includeAutoReports));
+}
+
+function finrap_list_report_snapshots(
+    string $company,
+    string $projectNo,
+    ?int $limit = null,
+    int $offset = 0,
+    bool $includeAutoReports = true,
+    bool $reconcile = true
+): array {
+    $index = finrap_ensure_report_index($company, $projectNo, $reconcile);
+    $rows = finrap_report_snapshot_rows_from_index($index, $includeAutoReports);
+
+    if ($limit === null) {
+        return $rows;
+    }
+
+    return array_slice($rows, max(0, $offset), max(0, $limit));
+}
+
+function finrap_report_list_page(
+    string $company,
+    string $projectNo,
+    int $limit,
+    int $offset,
+    bool $includeAutoReports = true,
+    bool $reconcile = true
+): array {
+    $index = finrap_ensure_report_index($company, $projectNo, $reconcile);
+    $rows = finrap_report_snapshot_rows_from_index($index, $includeAutoReports);
+    $totalCount = count($rows);
+    $offset = max(0, $offset);
+    $limit = max(1, $limit);
+    $reports = array_slice($rows, $offset, $limit);
+
+    return [
+        'reports' => $reports,
+        'total_count' => $totalCount,
+        'limit' => $limit,
+        'offset' => $offset,
+        'has_more' => ($offset + count($reports)) < $totalCount,
+    ];
 }
 
 function finrap_is_auto_report(array $payload): bool
@@ -611,29 +1197,9 @@ function finrap_should_generate_nightly_report(string $company, string $projectN
 
 function finrap_list_project_report_entries(string $company, string $projectNo): array
 {
-    $entries = [];
-    foreach (finrap_list_report_snapshots($company, $projectNo) as $reportEntry) {
-        if (!is_array($reportEntry)) {
-            continue;
-        }
+    $index = finrap_ensure_report_index($company, $projectNo);
 
-        $reportId = trim((string) ($reportEntry['report_id'] ?? ''));
-        if ($reportId === '') {
-            continue;
-        }
-
-        $entries[] = [
-            'report_id' => $reportId,
-            'fetched_at' => (string) ($reportEntry['fetched_at'] ?? ''),
-            'auto_report' => (bool) ($reportEntry['auto_report'] ?? false),
-        ];
-    }
-
-    usort($entries, static function (array $left, array $right): int {
-        return strcmp((string) ($left['fetched_at'] ?? ''), (string) ($right['fetched_at'] ?? ''));
-    });
-
-    return $entries;
+    return finrap_project_report_entries_from_index($index);
 }
 
 function finrap_select_dashboard_report_entries(array $entries, bool $debugAllReports): array
@@ -700,6 +1266,27 @@ function finrap_compute_report_poc_metrics(string $company, string $projectNo, s
 
 function finrap_build_project_dashboard(string $company, string $projectNo, bool $debugAllReports = false): array
 {
+    if (!$debugAllReports) {
+        $cache = finrap_load_dashboard_cache($company, $projectNo);
+        if (finrap_is_dashboard_cache_current($company, $projectNo, $cache) && is_array($cache['dashboard'] ?? null)) {
+            return array_merge($cache['dashboard'], [
+                'company' => $company,
+                'project_no' => $projectNo,
+                'debug_all_reports' => false,
+            ]);
+        }
+
+        finrap_refresh_dashboard_cache($company, $projectNo);
+        $cache = finrap_load_dashboard_cache($company, $projectNo);
+        if (is_array($cache['dashboard'] ?? null)) {
+            return array_merge($cache['dashboard'], [
+                'company' => $company,
+                'project_no' => $projectNo,
+                'debug_all_reports' => false,
+            ]);
+        }
+    }
+
     $entries = finrap_list_project_report_entries($company, $projectNo);
     $selected = finrap_select_dashboard_report_entries($entries, $debugAllReports);
     $points = [];
@@ -772,9 +1359,13 @@ function finrap_build_project_dashboard(string $company, string $projectNo, bool
     ];
 }
 
-function finrap_build_installments_received_history(string $company, string $projectNo): array
+function finrap_build_installments_received_history(string $company, string $projectNo, ?array $index = null): array
 {
-    $reports = finrap_list_report_snapshots($company, $projectNo);
+    if ($index === null) {
+        $index = finrap_ensure_report_index($company, $projectNo);
+    }
+
+    $reports = is_array($index['reports'] ?? null) ? $index['reports'] : [];
     if ($reports === []) {
         return [];
     }
@@ -795,17 +1386,11 @@ function finrap_build_installments_received_history(string $company, string $pro
             continue;
         }
 
-        $payload = finrap_load_report_snapshot($company, $projectNo, $reportId);
-        if (!is_array($payload)) {
-            continue;
-        }
-
-        $modal = is_array($payload['project_modal'] ?? null) ? $payload['project_modal'] : [];
         $pointsByDay[$chartDate] = [
             'date' => $chartDate,
             'report_id' => $reportId,
-            'auto_report' => finrap_is_auto_report($payload),
-            'amount' => round(finance_to_float($modal['installments_received'] ?? 0.0), 2),
+            'auto_report' => (bool) ($reportEntry['auto_report'] ?? false),
+            'amount' => round(finance_to_float($reportEntry['installments_received'] ?? 0.0), 2),
         ];
     }
 

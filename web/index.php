@@ -378,12 +378,25 @@ if (($_GET['action'] ?? '') === 'find_project') {
 		$recentProjectsPayload = index_normalize_recent_projects(
 			is_array($settings['finrap_recent_projects'] ?? null) ? $settings['finrap_recent_projects'] : []
 		);
+		$includeAutoReports = array_key_exists('include_auto_reports', $_POST)
+			? trim((string) $_POST['include_auto_reports']) === '1'
+			: $showAutoReports;
+		$reportsPage = finrap_report_list_page(
+			$company,
+			$resolvedProjectNo,
+			FINRAP_REPORT_LIST_PAGE_SIZE,
+			0,
+			$includeAutoReports,
+			true
+		);
 
 		index_json_response([
 			'ok' => true,
 			'project' => $project,
 			'project_no' => $resolvedProjectNo,
-			'reports' => finrap_list_report_snapshots($company, $resolvedProjectNo),
+			'reports' => $reportsPage['reports'],
+			'reports_total_count' => $reportsPage['total_count'],
+			'reports_has_more' => $reportsPage['has_more'],
 			'recent_projects' => $recentProjectsPayload,
 		]);
 	} catch (Throwable $error) {
@@ -398,9 +411,18 @@ if (($_GET['action'] ?? '') === 'list_reports') {
 		index_json_response(['ok' => false, 'error' => LOC('error.invalid_input')], 400);
 	}
 
+	$limit = max(1, min(100, (int) ($_POST['limit'] ?? FINRAP_REPORT_LIST_PAGE_SIZE)));
+	$offset = max(0, (int) ($_POST['offset'] ?? 0));
+	$includeAutoReports = trim((string) ($_POST['include_auto_reports'] ?? '1')) === '1';
+	$reportsPage = finrap_report_list_page($company, $projectNo, $limit, $offset, $includeAutoReports, false);
+
 	index_json_response([
 		'ok' => true,
-		'reports' => finrap_list_report_snapshots($company, $projectNo),
+		'reports' => $reportsPage['reports'],
+		'total_count' => $reportsPage['total_count'],
+		'limit' => $reportsPage['limit'],
+		'offset' => $reportsPage['offset'],
+		'has_more' => $reportsPage['has_more'],
 	]);
 }
 
@@ -430,12 +452,25 @@ if (($_GET['action'] ?? '') === 'generate_report') {
 
 		finrap_inherit_overrides_from_previous_report($company, $resolvedProjectNo, $reportId);
 
+		$includeAutoReports = array_key_exists('include_auto_reports', $_POST)
+			? trim((string) $_POST['include_auto_reports']) === '1'
+			: $showAutoReports;
+		$reportsPage = finrap_report_list_page(
+			$company,
+			$resolvedProjectNo,
+			FINRAP_REPORT_LIST_PAGE_SIZE,
+			0,
+			$includeAutoReports,
+			false
+		);
 		$reportLang = rawurlencode(getCurrentLanguage());
 		index_json_response([
 			'ok' => true,
 			'project_no' => $resolvedProjectNo,
 			'report_id' => $reportId,
-			'reports' => finrap_list_report_snapshots($company, $resolvedProjectNo),
+			'reports' => $reportsPage['reports'],
+			'reports_total_count' => $reportsPage['total_count'],
+			'reports_has_more' => $reportsPage['has_more'],
 			'report_url' => 'finrap.php?company=' . rawurlencode($company) . '&project_no=' . rawurlencode($resolvedProjectNo) . '&report_id=' . rawurlencode($reportId) . '&lang=' . $reportLang,
 		]);
 	} catch (Throwable $error) {
@@ -457,9 +492,23 @@ if (($_GET['action'] ?? '') === 'delete_report') {
 		index_json_response(['ok' => false, 'error' => LOC('error.delete_report_failed')], 404);
 	}
 
+	$includeAutoReports = array_key_exists('include_auto_reports', $_POST)
+		? trim((string) $_POST['include_auto_reports']) === '1'
+		: $showAutoReports;
+	$reportsPage = finrap_report_list_page(
+		$company,
+		$projectNo,
+		FINRAP_REPORT_LIST_PAGE_SIZE,
+		0,
+		$includeAutoReports,
+		false
+	);
+
 	index_json_response([
 		'ok' => true,
-		'reports' => finrap_list_report_snapshots($company, $projectNo),
+		'reports' => $reportsPage['reports'],
+		'reports_total_count' => $reportsPage['total_count'],
+		'reports_has_more' => $reportsPage['has_more'],
 	]);
 }
 
@@ -506,6 +555,8 @@ $indexI18nKeys = [
 	'index.js.show_auto_reports',
 	'index.js.reports_empty',
 	'index.js.reports_empty_filtered',
+	'index.js.reports_load_more',
+	'index.js.reports_loading_more',
 	'index.js.btn.open',
 	'index.js.dashboard_btn',
 	'index.js.dashboard_modal_title',
@@ -724,6 +775,11 @@ $indexI18nKeys = [
 			justify-content: space-between;
 			gap: 10px 16px;
 			margin-top: 14px;
+		}
+
+		.report-list-load-more {
+			margin-top: 8px;
+			width: 100%;
 		}
 
 		.auto-reports-toggle {
@@ -1501,6 +1557,7 @@ $indexI18nKeys = [
 			const dateLocale = <?= json_encode(getDateLocale(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
 			const initialRecentProjects = <?= json_encode($recentProjects, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
 			const initialShowAutoReports = <?= $showAutoReports ? 'true' : 'false' ?>;
+			const REPORT_LIST_PAGE_SIZE = <?= (int) FINRAP_REPORT_LIST_PAGE_SIZE ?>;
 			const currentUserHandle = <?= json_encode(finrap_email_local_part(index_get_user_email()), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
 			const companySelect = document.getElementById('companySelect');
 			const projectInput = document.getElementById('projectInput');
@@ -1557,6 +1614,11 @@ $indexI18nKeys = [
 			let pendingDeleteIsAutoReport = false;
 			let currentProjectData = null;
 			let currentReports = [];
+			let currentReportsTotal = 0;
+			let currentReportsHasMore = false;
+			let activeReportListEl = null;
+			let reportListLoadMoreBtn = null;
+			let reportListLoadingMore = false;
 			let showAutoReports = initialShowAutoReports === true;
 			let dashboardPocChartInstance = null;
 			let dashboardBookedChartInstance = null;
@@ -1853,7 +1915,8 @@ $indexI18nKeys = [
 				postForm('index.php?action=delete_report', {
 					company: companySelect.value,
 					project_no: activeProjectNo,
-					report_id: reportId
+					report_id: reportId,
+					include_auto_reports: showAutoReports ? '1' : '0'
 				}).then(function (json)
 				{
 					closeDeleteModals();
@@ -1864,7 +1927,11 @@ $indexI18nKeys = [
 					}
 
 					setStatus(i18n['index.js.status.deleted'], false);
-					renderProject(currentProjectData || {}, json.reports || []);
+					applyReportsPayload(json);
+					if (activeReportListEl)
+					{
+						renderReportList(activeReportListEl, currentReports);
+					}
 				}).catch(function (error)
 				{
 					closeDeleteModals();
@@ -1894,6 +1961,45 @@ $indexI18nKeys = [
 				});
 			}
 
+			function applyReportsPayload (payload, append)
+			{
+				const nextReports = Array.isArray(payload && payload.reports) ? payload.reports : [];
+				if (append === true)
+				{
+					currentReports = currentReports.concat(nextReports);
+				}
+				else
+				{
+					currentReports = nextReports;
+				}
+
+				if (payload && typeof payload.reports_total_count === 'number')
+				{
+					currentReportsTotal = payload.reports_total_count;
+				}
+				else if (payload && typeof payload.total_count === 'number')
+				{
+					currentReportsTotal = payload.total_count;
+				}
+				else if (append !== true)
+				{
+					currentReportsTotal = currentReports.length;
+				}
+
+				if (payload && typeof payload.reports_has_more === 'boolean')
+				{
+					currentReportsHasMore = payload.reports_has_more;
+				}
+				else if (payload && typeof payload.has_more === 'boolean')
+				{
+					currentReportsHasMore = payload.has_more;
+				}
+				else
+				{
+					currentReportsHasMore = currentReports.length < currentReportsTotal;
+				}
+			}
+
 			function getVisibleReports (reports)
 			{
 				const list = Array.isArray(reports) ? reports : [];
@@ -1908,8 +2014,118 @@ $indexI18nKeys = [
 				});
 			}
 
+			function renderReportListLoadMore (container)
+			{
+				if (reportListLoadMoreBtn && reportListLoadMoreBtn.parentElement)
+				{
+					reportListLoadMoreBtn.parentElement.removeChild(reportListLoadMoreBtn);
+				}
+				reportListLoadMoreBtn = null;
+
+				if (!currentReportsHasMore || !container)
+				{
+					return;
+				}
+
+				const shownCount = currentReports.length;
+				const totalCount = Math.max(currentReportsTotal, shownCount);
+				const loadMoreBtn = document.createElement('button');
+				loadMoreBtn.className = 'btn btn-alt report-list-load-more';
+				loadMoreBtn.type = 'button';
+				loadMoreBtn.textContent = i18n['index.js.reports_load_more']
+					.replace('%s', String(shownCount))
+					.replace('%s', String(totalCount));
+				loadMoreBtn.disabled = reportListLoadingMore;
+				loadMoreBtn.addEventListener('click', loadMoreReports);
+				container.insertAdjacentElement('afterend', loadMoreBtn);
+				reportListLoadMoreBtn = loadMoreBtn;
+			}
+
+			function loadMoreReports ()
+			{
+				if (reportListLoadingMore || !currentReportsHasMore || activeProjectNo === '')
+				{
+					return;
+				}
+
+				reportListLoadingMore = true;
+				if (reportListLoadMoreBtn)
+				{
+					reportListLoadMoreBtn.disabled = true;
+					reportListLoadMoreBtn.textContent = i18n['index.js.reports_loading_more'];
+				}
+
+				postForm('index.php?action=list_reports', {
+					company: companySelect.value,
+					project_no: activeProjectNo,
+					limit: String(REPORT_LIST_PAGE_SIZE),
+					offset: String(currentReports.length),
+					include_auto_reports: showAutoReports ? '1' : '0'
+				}).then(function (json)
+				{
+					reportListLoadingMore = false;
+					if (!json.ok)
+					{
+						setStatus(json.error || i18n['index.js.network_error'].replace('%s', ''), true);
+						if (reportListLoadMoreBtn)
+						{
+							reportListLoadMoreBtn.disabled = false;
+							renderReportListLoadMore(activeReportListEl);
+						}
+						return;
+					}
+
+					applyReportsPayload(json, true);
+					if (activeReportListEl)
+					{
+						renderReportList(activeReportListEl, currentReports);
+					}
+				}).catch(function (error)
+				{
+					reportListLoadingMore = false;
+					setStatus(i18n['index.js.network_error'].replace('%s', error.message), true);
+					if (reportListLoadMoreBtn)
+					{
+						reportListLoadMoreBtn.disabled = false;
+						renderReportListLoadMore(activeReportListEl);
+					}
+				});
+			}
+
+			function reloadReportListPage ()
+			{
+				if (activeProjectNo === '')
+				{
+					return;
+				}
+
+				postForm('index.php?action=list_reports', {
+					company: companySelect.value,
+					project_no: activeProjectNo,
+					limit: String(REPORT_LIST_PAGE_SIZE),
+					offset: '0',
+					include_auto_reports: showAutoReports ? '1' : '0'
+				}).then(function (json)
+				{
+					if (!json.ok)
+					{
+						return;
+					}
+
+					applyReportsPayload(json, false);
+					if (activeReportListEl)
+					{
+						renderReportList(activeReportListEl, currentReports);
+					}
+				}).catch(function ()
+				{
+					// List refresh failure should not block UI filtering.
+				});
+			}
+
 			function renderReportList (container, reports)
 			{
+				activeReportListEl = container;
 				container.innerHTML = '';
 				const list = Array.isArray(reports) ? reports : [];
 				const visibleReports = getVisibleReports(list);
@@ -1922,10 +2138,12 @@ $indexI18nKeys = [
 					{
 						return entry && entry.auto_report === true;
 					});
-					empty.textContent = hasHiddenAutoReports
+					const hasMoreReports = currentReportsHasMore || currentReportsTotal > list.length;
+					empty.textContent = hasHiddenAutoReports && !hasMoreReports
 						? i18n['index.js.reports_empty_filtered']
 						: i18n['index.js.reports_empty'];
 					container.appendChild(empty);
+					renderReportListLoadMore(container);
 					return;
 				}
 
@@ -1996,6 +2214,8 @@ $indexI18nKeys = [
 					item.appendChild(actions);
 					container.appendChild(item);
 				});
+
+				renderReportListLoadMore(container);
 			}
 
 			function normalizeRecentProjects (items)
@@ -3031,12 +3251,12 @@ $indexI18nKeys = [
 				});
 			}
 
-			function renderProject (project, reports)
+			function renderProject (project, reportsPayload)
 			{
 				const no = String((project && project.No) || activeProjectNo || '').trim();
 				currentProjectData = project || {};
 				activeProjectNo = no;
-				currentReports = Array.isArray(reports) ? reports : [];
+				applyReportsPayload(Array.isArray(reportsPayload) ? { reports: reportsPayload } : (reportsPayload || {}), false);
 				projectArea.innerHTML = '';
 
 				const card = document.createElement('div');
@@ -3096,7 +3316,7 @@ $indexI18nKeys = [
 				{
 					showAutoReports = autoReportsCheckbox.checked;
 					saveAutoReportsPreference(showAutoReports);
-					renderReportList(reportList, currentReports);
+					reloadReportListPage();
 				});
 				autoReportsToggle.appendChild(autoReportsCheckbox);
 				autoReportsToggle.appendChild(document.createTextNode(i18n['index.js.show_auto_reports']));
@@ -3115,7 +3335,8 @@ $indexI18nKeys = [
 					showLoader('generate', i18n['index.js.status.generate_subtitle'].replace('%s', no));
 					postForm('index.php?action=generate_report', {
 						company: companySelect.value,
-						project_no: activeProjectNo
+						project_no: activeProjectNo,
+						include_auto_reports: showAutoReports ? '1' : '0'
 					}).then(function (json)
 					{
 						generateBtn.disabled = false;
@@ -3128,7 +3349,7 @@ $indexI18nKeys = [
 
 						finalizeLoader(i18n['index.js.status.report_ready']);
 						setStatus(i18n['index.js.status.generated'], false);
-						renderProject(project, json.reports || []);
+						renderProject(project, json);
 						if (json.report_url)
 						{
 							openFinrapModal(json.report_url, i18n['index.js.report_modal_title'].replace('%s', activeProjectNo), false);
@@ -3159,7 +3380,8 @@ $indexI18nKeys = [
 				showLoader('search', i18n['index.js.status.search_subtitle'].replace('%s', projectNo));
 				postForm('index.php?action=find_project', {
 					company: companySelect.value,
-					project_no: projectNo
+					project_no: projectNo,
+					include_auto_reports: showAutoReports ? '1' : '0'
 				}).then(function (json)
 				{
 					findBtn.disabled = false;
@@ -3179,7 +3401,7 @@ $indexI18nKeys = [
 
 					finalizeLoader(i18n['index.loader.done']);
 					setStatus(i18n['index.js.status.found'].replace('%s', String(json.project_no || projectNo)), false);
-					renderProject(json.project || {}, json.reports || []);
+					renderProject(json.project || {}, json);
 					window.setTimeout(hideLoader, 240);
 				}).catch(function (error)
 				{
