@@ -17,6 +17,7 @@ const FINRAP_BUDGET_HOURS_ENTITY_SET = 'JobBaselineLines';
 const FINRAP_BUDGET_HOURS_FIELD = 'Quantity';
 const FINRAP_BUDGET_HOURS_FILTER_BASELINE_FIELD = 'Baseline_Version_in_Filter';
 const FINRAP_BUDGET_COST_FIELD = 'Total_Cost';
+const FINRAP_BUDGET_REVENUE_FIELD = 'Line_Amount';
 const FINRAP_BUDGET_HOURS_FILTER_TYPE_FIELD = 'Type';
 const FINRAP_BUDGET_HOURS_FILTER_RESOURCE_TYPE_FIELD = 'Resource_Type';
 const FINRAP_BUDGET_HOURS_FILTER_UOM_FIELD = 'Unit_of_Measure_Code';
@@ -1755,7 +1756,7 @@ function finrap_fetch_budget_hours_total(
     return null;
 }
 
-function finrap_fetch_baseline_costs_by_task(
+function finrap_fetch_baseline_amounts_by_task(
     string $baseUrl,
     string $environment,
     string $company,
@@ -1764,21 +1765,34 @@ function finrap_fetch_baseline_costs_by_task(
     array $allowedTaskKeys,
     int $ttl
 ): array {
-    if (trim(FINRAP_BUDGET_HOURS_ENTITY_SET) === '' || trim(FINRAP_BUDGET_COST_FIELD) === '') {
-        return [];
+    $emptyResult = ['costs' => [], 'revenue' => []];
+    if (trim(FINRAP_BUDGET_HOURS_ENTITY_SET) === '') {
+        return $emptyResult;
     }
 
-    $costFilter = $projectFilter
+    $selectFields = ['Job_Task_No'];
+    if (trim(FINRAP_BUDGET_COST_FIELD) !== '') {
+        $selectFields[] = FINRAP_BUDGET_COST_FIELD;
+    }
+    if (trim(FINRAP_BUDGET_REVENUE_FIELD) !== '') {
+        $selectFields[] = FINRAP_BUDGET_REVENUE_FIELD;
+    }
+
+    if (count($selectFields) === 1) {
+        return $emptyResult;
+    }
+
+    $baselineFilter = $projectFilter
         . ' and ' . FINRAP_BUDGET_HOURS_FILTER_BASELINE_FIELD . ' eq true';
 
     try {
-        $costUrl = finrap_company_entity_url_with_query($baseUrl, $environment, $company, FINRAP_BUDGET_HOURS_ENTITY_SET, [
-            '$select' => 'Job_Task_No,' . FINRAP_BUDGET_COST_FIELD,
-            '$filter' => $costFilter,
+        $baselineUrl = finrap_company_entity_url_with_query($baseUrl, $environment, $company, FINRAP_BUDGET_HOURS_ENTITY_SET, [
+            '$select' => implode(',', $selectFields),
+            '$filter' => $baselineFilter,
         ]);
-        $costRows = odata_get_all($costUrl, $auth, $ttl);
-    } catch (Throwable $ignoredBaselineCostLoadError) {
-        return [];
+        $baselineRows = odata_get_all($baselineUrl, $auth, $ttl);
+    } catch (Throwable $ignoredBaselineLoadError) {
+        return $emptyResult;
     }
 
     $allowedLookup = [];
@@ -1790,12 +1804,13 @@ function finrap_fetch_baseline_costs_by_task(
     }
 
     $costsByTask = [];
-    foreach ($costRows as $costRow) {
-        if (!is_array($costRow)) {
+    $revenueByTask = [];
+    foreach ($baselineRows as $baselineRow) {
+        if (!is_array($baselineRow)) {
             continue;
         }
 
-        $taskNo = trim((string) ($costRow['Job_Task_No'] ?? ''));
+        $taskNo = trim((string) ($baselineRow['Job_Task_No'] ?? ''));
         if ($taskNo === '') {
             continue;
         }
@@ -1809,13 +1824,45 @@ function finrap_fetch_baseline_costs_by_task(
             continue;
         }
 
-        $costsByTask[$taskKey] = finance_add_amount(
-            (float) ($costsByTask[$taskKey] ?? 0.0),
-            finance_to_float($costRow[FINRAP_BUDGET_COST_FIELD] ?? 0.0)
-        );
+        if (trim(FINRAP_BUDGET_COST_FIELD) !== '') {
+            $costsByTask[$taskKey] = finance_add_amount(
+                (float) ($costsByTask[$taskKey] ?? 0.0),
+                finance_to_float($baselineRow[FINRAP_BUDGET_COST_FIELD] ?? 0.0)
+            );
+        }
+
+        if (trim(FINRAP_BUDGET_REVENUE_FIELD) !== '') {
+            $revenueByTask[$taskKey] = finance_add_amount(
+                (float) ($revenueByTask[$taskKey] ?? 0.0),
+                finance_to_float($baselineRow[FINRAP_BUDGET_REVENUE_FIELD] ?? 0.0)
+            );
+        }
     }
 
-    return $costsByTask;
+    return [
+        'costs' => $costsByTask,
+        'revenue' => $revenueByTask,
+    ];
+}
+
+function finrap_fetch_baseline_costs_by_task(
+    string $baseUrl,
+    string $environment,
+    string $company,
+    array $auth,
+    string $projectFilter,
+    array $allowedTaskKeys,
+    int $ttl
+): array {
+    return finrap_fetch_baseline_amounts_by_task(
+        $baseUrl,
+        $environment,
+        $company,
+        $auth,
+        $projectFilter,
+        $allowedTaskKeys,
+        $ttl
+    )['costs'];
 }
 
 function finrap_fetch_estimated_hours_total(
@@ -1997,6 +2044,7 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
             'Cost_Group_Description' => (string) ($taskRow['Description'] ?? ''),
             'Job_Task_Type' => (string) ($taskRow['Job_Task_Type'] ?? ''),
             'Totaling' => (string) ($taskRow['Totaling'] ?? ''),
+            'Budget_Revenue' => 0.0,
             'Budget_Cost' => 0.0,
             'EAC' => 0.0,
             'Booked_Cost' => 0.0,
@@ -2093,7 +2141,7 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
         );
     }
 
-    $baselineCostsByTask = finrap_fetch_baseline_costs_by_task(
+    $baselineAmountsByTask = finrap_fetch_baseline_amounts_by_task(
         $baseUrl,
         $environment,
         $company,
@@ -2102,12 +2150,15 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
         array_keys($taskRowsByKey),
         $ttl
     );
+    $baselineCostsByTask = is_array($baselineAmountsByTask['costs'] ?? null) ? $baselineAmountsByTask['costs'] : [];
+    $baselineRevenueByTask = is_array($baselineAmountsByTask['revenue'] ?? null) ? $baselineAmountsByTask['revenue'] : [];
     foreach ($taskRowsByKey as $taskKey => &$taskRow) {
         if (!is_array($taskRow) || (bool) ($taskRow['Is_Total_Row'] ?? false)) {
             continue;
         }
 
         $taskRow['Budget_Cost'] = finance_to_float($baselineCostsByTask[$taskKey] ?? 0.0);
+        $taskRow['Budget_Revenue'] = finance_to_float($baselineRevenueByTask[$taskKey] ?? 0.0);
     }
     unset($taskRow);
 
@@ -2186,6 +2237,7 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
 
         if ((bool) ($taskRow['Is_Total_Row'] ?? false)) {
             $budgetTotal = 0.0;
+            $budgetRevenueTotal = 0.0;
             $bookedTotal = 0.0;
             $obligationTotal = 0.0;
             $invoicedTotal = 0.0;
@@ -2201,12 +2253,14 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
                         continue;
                     }
 
+                    $budgetRevenueTotal = finance_add_amount($budgetRevenueTotal, finance_to_float($bookingRow['Budget_Revenue'] ?? 0.0));
                     $budgetTotal = finance_add_amount($budgetTotal, finance_to_float($bookingRow['Budget_Cost'] ?? 0.0));
                     $bookedTotal = finance_add_amount($bookedTotal, finance_to_float($bookingRow['Booked_Cost'] ?? 0.0));
                     $obligationTotal = finance_add_amount($obligationTotal, finance_to_float($bookingRow['Entered_Obligations'] ?? 0.0));
                     $invoicedTotal = finance_add_amount($invoicedTotal, finance_to_float($bookingRow['Invoiced_Amount'] ?? 0.0));
                 }
 
+                $taskRowsByKey[$taskKey]['Budget_Revenue'] = $budgetRevenueTotal;
                 $taskRowsByKey[$taskKey]['Budget_Cost'] = $budgetTotal;
                 $taskRowsByKey[$taskKey]['Booked_Cost'] = $bookedTotal;
                 $taskRowsByKey[$taskKey]['Entered_Obligations'] = $obligationTotal;
@@ -2264,6 +2318,7 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
     $modal['task_rows_total'] = [
         'Cost_Group_Code' => 'TOTAL',
         'Cost_Group_Description' => 'Totaal alle regels',
+        'Budget_Revenue' => $aggregatedTotals['Budget_Revenue'],
         'Budget_Cost' => $aggregatedTotals['Budget_Cost'],
         'EAC' => $aggregatedTotals['EAC'],
         'Booked_Cost' => $aggregatedTotals['Booked_Cost'],
@@ -2409,6 +2464,7 @@ function finrap_is_detail_task_row(array $taskRow): bool
 
 function finrap_aggregate_detail_task_rows(array $taskRows): array
 {
+    $budgetRevenueTotal = 0.0;
     $budgetTotal = 0.0;
     $eacTotal = 0.0;
     $bookedTotal = 0.0;
@@ -2420,6 +2476,7 @@ function finrap_aggregate_detail_task_rows(array $taskRows): array
             continue;
         }
 
+        $budgetRevenueTotal = finance_add_amount($budgetRevenueTotal, finance_to_float($taskRow['Budget_Revenue'] ?? 0.0));
         $budgetTotal = finance_add_amount($budgetTotal, finance_to_float($taskRow['Budget_Cost'] ?? 0.0));
         $eacTotal = finance_add_amount($eacTotal, finance_to_float($taskRow['EAC'] ?? 0.0));
         $bookedTotal = finance_add_amount($bookedTotal, finance_to_float($taskRow['Booked_Cost'] ?? 0.0));
@@ -2428,6 +2485,7 @@ function finrap_aggregate_detail_task_rows(array $taskRows): array
     }
 
     return [
+        'Budget_Revenue' => $budgetRevenueTotal,
         'Budget_Cost' => $budgetTotal,
         'EAC' => $eacTotal,
         'Booked_Cost' => $bookedTotal,
@@ -2464,6 +2522,7 @@ function finrap_rollup_total_row_metrics(array &$taskRows): void
             continue;
         }
 
+        $budgetRevenueTotal = 0.0;
         $budgetTotal = 0.0;
         $eacTotal = 0.0;
         $bookedTotal = 0.0;
@@ -2480,6 +2539,7 @@ function finrap_rollup_total_row_metrics(array &$taskRows): void
                 continue;
             }
 
+            $budgetRevenueTotal = finance_add_amount($budgetRevenueTotal, finance_to_float($detailRow['Budget_Revenue'] ?? 0.0));
             $budgetTotal = finance_add_amount($budgetTotal, finance_to_float($detailRow['Budget_Cost'] ?? 0.0));
             $eacTotal = finance_add_amount($eacTotal, finance_to_float($detailRow['EAC'] ?? 0.0));
             $bookedTotal = finance_add_amount($bookedTotal, finance_to_float($detailRow['Booked_Cost'] ?? 0.0));
@@ -2487,6 +2547,7 @@ function finrap_rollup_total_row_metrics(array &$taskRows): void
             $invoicedTotal = finance_add_amount($invoicedTotal, finance_to_float($detailRow['Invoiced_Amount'] ?? 0.0));
         }
 
+        $taskRow['Budget_Revenue'] = $budgetRevenueTotal;
         $taskRow['Budget_Cost'] = $budgetTotal;
         $taskRow['EAC'] = $eacTotal;
         $taskRow['Booked_Cost'] = $bookedTotal;

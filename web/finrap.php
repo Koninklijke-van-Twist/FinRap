@@ -103,6 +103,12 @@ function finrap_cost_group_value_tooltip_html(string $columnKey): string
         ]);
     }
 
+    if ($columnKey === 'Budget_Revenue') {
+        return finrap_tooltip_formula_html([
+            ['type' => 'ref', 'table' => FINRAP_BUDGET_HOURS_ENTITY_SET, 'field' => FINRAP_BUDGET_REVENUE_FIELD],
+        ]);
+    }
+
     if ($columnKey === 'Budget_Cost') {
         return finrap_tooltip_formula_html([
             ['type' => 'ref', 'table' => FINRAP_BUDGET_HOURS_ENTITY_SET, 'field' => FINRAP_BUDGET_COST_FIELD],
@@ -197,30 +203,30 @@ function finrap_cost_group_columns(): array
     return [
         ['key' => 'Cost_Group_Code', 'label' => LOC('report.col.cost_group_code'), 'is_right' => false, 'tooltip' => ''],
         ['key' => 'Cost_Group_Description', 'label' => LOC('report.col.cost_group_description'), 'is_right' => false, 'tooltip' => ''],
+        ['key' => 'Budget_Revenue', 'label' => LOC('report.col.budget_revenue'), 'is_right' => true, 'tooltip' => LOC('report.tooltip.col.budget_revenue')],
         ['key' => 'Budget_Cost', 'label' => LOC('report.col.budget_cost'), 'is_right' => true, 'tooltip' => LOC('report.tooltip.col.budget_cost')],
         ['key' => 'EAC', 'label' => LOC('report.col.eac'), 'is_right' => true, 'tooltip' => LOC('report.tooltip.col.eac')],
         ['key' => 'Booked_Cost', 'label' => LOC('report.col.booked_cost'), 'is_right' => true, 'tooltip' => LOC('report.tooltip.col.booked_cost')],
         ['key' => 'Entered_Obligations', 'label' => LOC('report.col.entered_obligations'), 'is_right' => true, 'tooltip' => LOC('report.tooltip.col.entered_obligations')],
-        ['key' => 'Invoiced_Amount', 'label' => LOC('report.col.invoiced_amount'), 'is_right' => true, 'tooltip' => LOC('report.tooltip.col.invoiced_amount')],
         ['key' => 'Variance_Budget_EAC', 'label' => LOC('report.col.variance_budget_eac'), 'is_right' => true, 'tooltip' => LOC('report.tooltip.col.variance_budget_eac')],
     ];
 }
 
 function finrap_is_all_zero_totals_row(array $row): bool
 {
+    $budgetRevenue = finance_to_float($row['Budget_Revenue'] ?? 0.0);
     $budget = finance_to_float($row['Budget_Cost'] ?? 0.0);
     $eac = finance_to_float($row['EAC'] ?? 0.0);
     $booked = finance_to_float($row['Booked_Cost'] ?? 0.0);
     $obligations = finance_to_float($row['Entered_Obligations'] ?? 0.0);
-    $invoiced = finance_to_float($row['Invoiced_Amount'] ?? 0.0);
     $variance = finance_to_float($row['Variance_Budget_EAC'] ?? 0.0);
 
     $epsilon = 0.000001;
-    return abs($budget) < $epsilon
+    return abs($budgetRevenue) < $epsilon
+        && abs($budget) < $epsilon
         && abs($eac) < $epsilon
         && abs($booked) < $epsilon
         && abs($obligations) < $epsilon
-        && abs($invoiced) < $epsilon
         && abs($variance) < $epsilon;
 }
 
@@ -325,7 +331,7 @@ function finrap_render_cost_group_table(array $taskRows, bool $totalsOnly = fals
 
             $cellClass = trim('is-right ' . finrap_currency_sign_class($value));
             $display = htmlspecialchars(finrap_format_currency($value));
-            $metricAttr = in_array($columnKey, ['Budget_Cost', 'EAC', 'Booked_Cost', 'Entered_Obligations', 'Invoiced_Amount', 'Variance_Budget_EAC'], true)
+            $metricAttr = in_array($columnKey, ['Budget_Revenue', 'Budget_Cost', 'EAC', 'Booked_Cost', 'Entered_Obligations', 'Variance_Budget_EAC'], true)
                 ? ' data-metric-key="' . htmlspecialchars($columnKey) . '"'
                 : '';
             echo '<td class="' . htmlspecialchars($cellClass) . '"' . $metricAttr . '>' . finrap_render_value_with_tooltip_html($display, $tooltipHtml) . '</td>';
@@ -357,6 +363,7 @@ function finrap_task_rows_for_client(array $taskRows): array
             'code' => (string) ($taskRow['Cost_Group_Code'] ?? ''),
             'is_total_row' => (bool) ($taskRow['Is_Total_Row'] ?? false),
             'totaling' => (string) ($taskRow['Totaling'] ?? ''),
+            'budget_revenue' => finance_to_float($taskRow['Budget_Revenue'] ?? 0.0),
             'budget_cost' => finance_to_float($taskRow['Budget_Cost'] ?? 0.0),
             'eac' => finance_to_float($taskRow['EAC'] ?? 0.0),
             'booked_cost' => finance_to_float($taskRow['Booked_Cost'] ?? 0.0),
@@ -484,7 +491,7 @@ $eacTotal = (float) ($summaryTotals['EAC'] ?? 0.0);
 $budgetCostTotal = (float) ($summaryTotals['Budget_Cost'] ?? 0.0);
 $obligationTotal = (float) ($summaryTotals['Entered_Obligations'] ?? 0.0);
 $variance = finance_to_float($summaryTotals['Variance_Budget_EAC'] ?? finance_calculate_result($budgetCostTotal, $eacTotal));
-$orderResult = $grossProfit - $variance;
+$orderResult = $grossProfit + $variance;
 $installmentsInvoiced = (float) ($summary['total_revenue'] ?? 0.0);
 $installmentsReceived = (float) ($modal['installments_received'] ?? 0.0);
 
@@ -530,7 +537,7 @@ $tooltipGrossProfitPct = finrap_tooltip_formula_html([
     ['type' => 'ref', 'table' => 'FactureerbareProjectPlanningsRegels', 'field' => 'Line_Amount_LCY'],
 ]);
 $tooltipOrderResultPct = finrap_tooltip_formula_html([
-    ['type' => 'text', 'text' => '(GrossProfit - Variance) / '],
+    ['type' => 'text', 'text' => '(GrossProfit + Variance) / '],
     ['type' => 'ref', 'table' => 'FactureerbareProjectPlanningsRegels', 'field' => 'Line_Amount_LCY'],
 ]);
 $tooltipVariancePct = finrap_tooltip_formula_html([
@@ -622,7 +629,7 @@ $tooltipVarianceValue = finrap_tooltip_formula_html([
     ['type' => 'text', 'text' => LOC('report.col.eac')],
 ]);
 $tooltipOrderResult = finrap_tooltip_formula_html([
-    ['type' => 'text', 'text' => '(Contract Value - Total Direct Cost) - Variance'],
+    ['type' => 'text', 'text' => '(Contract Value - Total Direct Cost) + Variance'],
 ]);
 $tooltipInstallmentsInvoiced = finrap_tooltip_formula_html([
     ['type' => 'ref', 'table' => 'ProjectFinanceTotals', 'field' => 'total_revenue'],
@@ -1740,7 +1747,6 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                                     </th>
                                     <th class="is-right" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.col.booked_cost'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.col.booked_cost'), ENT_QUOTES) ?></th>
                                     <th class="is-right" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.col.entered_obligations'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.col.entered_obligations'), ENT_QUOTES) ?></th>
-                                    <th class="is-right" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.variance'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.variance'), ENT_QUOTES) ?></th>
                                     <th class="is-right" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.order_result'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.order_result'), ENT_QUOTES) ?>
                                     </th>
                                     <th class="is-right" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.installments_invoiced'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.installments_invoiced'), ENT_QUOTES) ?>
@@ -1765,9 +1771,6 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                                     </td>
                                     <td class="is-right <?= finrap_currency_sign_class($obligationTotal) ?>" id="metricObligations">
                                         <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($obligationTotal)), finrap_cost_group_value_tooltip_html('Entered_Obligations')) ?>
-                                    </td>
-                                    <td class="is-right <?= finrap_currency_sign_class($variance) ?>" id="metricVariance">
-                                        <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($variance)), $tooltipVarianceValue) ?>
                                     </td>
                                     <td class="is-right <?= finrap_currency_sign_class($orderResult) ?>" id="metricOrderResult">
                                         <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($orderResult)), $tooltipOrderResult) ?>
@@ -2074,6 +2077,7 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
 
                 function aggregateDetailRows (rows)
                 {
+                    let budgetRevenueTotal = 0;
                     let budgetTotal = 0;
                     let eacTotal = 0;
                     let bookedTotal = 0;
@@ -2087,6 +2091,7 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                             return;
                         }
 
+                        budgetRevenueTotal += Number(row.budget_revenue || 0);
                         budgetTotal += Number(row.budget_cost || 0);
                         eacTotal += Number(row.eac || 0);
                         bookedTotal += Number(row.booked_cost || 0);
@@ -2095,6 +2100,7 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                     });
 
                     return {
+                        budget_revenue: budgetRevenueTotal,
                         budget_cost: budgetTotal,
                         eac: eacTotal,
                         booked_cost: bookedTotal,
@@ -2142,6 +2148,7 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                             return;
                         }
 
+                        let budgetRevenueTotal = 0;
                         let budgetTotal = 0;
                         let eacTotal = 0;
                         let bookedTotal = 0;
@@ -2155,6 +2162,7 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                                 return;
                             }
 
+                            budgetRevenueTotal += Number(detailRow.budget_revenue || 0);
                             budgetTotal += Number(detailRow.budget_cost || 0);
                             eacTotal += Number(detailRow.eac || 0);
                             bookedTotal += Number(detailRow.booked_cost || 0);
@@ -2162,6 +2170,7 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                             invoicedTotal += Number(detailRow.invoiced_amount || 0);
                         });
 
+                        row.budget_revenue = budgetRevenueTotal;
                         row.budget_cost = budgetTotal;
                         row.eac = eacTotal;
                         row.booked_cost = bookedTotal;
@@ -2186,11 +2195,11 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                 {
                     const epsilon = 0.000001;
                     const values = [
+                        Number(row.budget_revenue || 0),
                         Number(row.budget_cost || 0),
                         Number(row.eac || 0),
                         Number(row.booked_cost || 0),
                         Number(row.entered_obligations || 0),
-                        Number(row.invoiced_amount || 0),
                         Number(row.variance_budget_eac || 0)
                     ];
 
@@ -2324,7 +2333,7 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                     const obligations = Number(summaryTotals.entered_obligations || 0);
                     const variance = Number(summaryTotals.variance_budget_eac || (budgetCost - eac));
                     const grossProfit = Number(finrapContext.contractValue || 0) - Number(finrapContext.totalDirectCost || 0);
-                    const orderResult = grossProfit - variance;
+                    const orderResult = grossProfit + variance;
                     const pocBaseline = calculatePocPercent(bookedCost, budgetCost);
                     const pocEac = calculatePocPercent(bookedCost, eac);
                     const contractValue = Number(finrapContext.contractValue || 0);
@@ -2335,7 +2344,6 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                     updateMetricCell('metricBudgetCost', budgetCost);
                     updateMetricCell('metricBookedCost', bookedCost);
                     updateMetricCell('metricObligations', obligations);
-                    updateMetricCell('metricVariance', variance);
                     updateMetricCell('metricOrderResult', orderResult);
                     updateAnalyticsValue('metricExpVariance', expVariance, formatCurrency);
                     updateAnalyticsValue('pocBaselineValue', pocBaseline, formatPercent);
@@ -2359,11 +2367,11 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
 
                     rows.forEach(function (row)
                     {
+                        updateTableCell(row.code, 'Budget_Revenue', row.budget_revenue);
                         updateTableCell(row.code, 'Budget_Cost', row.budget_cost);
                         updateTableCell(row.code, 'EAC', row.eac);
                         updateTableCell(row.code, 'Booked_Cost', row.booked_cost);
                         updateTableCell(row.code, 'Entered_Obligations', row.entered_obligations);
-                        updateTableCell(row.code, 'Invoiced_Amount', row.invoiced_amount);
                         updateTableCell(row.code, 'Variance_Budget_EAC', row.variance_budget_eac);
                     });
 
