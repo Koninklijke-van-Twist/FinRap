@@ -106,19 +106,20 @@ function finrap_cost_group_value_tooltip_html(string $columnKey): string
     if ($columnKey === 'Budget_Revenue') {
         return finrap_tooltip_formula_html([
             ['type' => 'ref', 'table' => FINRAP_BUDGET_HOURS_ENTITY_SET, 'field' => FINRAP_BUDGET_REVENUE_FIELD],
+            ['type' => 'text', 'text' => ' (Type = ' . FINRAP_BUDGET_REVENUE_TYPE . ', No = ' . FINRAP_BUDGET_REVENUE_NO . ')'],
         ]);
     }
 
     if ($columnKey === 'Budget_Cost') {
         return finrap_tooltip_formula_html([
-            ['type' => 'ref', 'table' => FINRAP_BUDGET_HOURS_ENTITY_SET, 'field' => FINRAP_BUDGET_COST_FIELD],
+            ['type' => 'ref', 'table' => FINRAP_PROJECT_TASK_ENTITY_SET, 'field' => FINRAP_PROJECT_TASK_BASELINE_COST_FIELD],
         ]);
     }
 
     if ($columnKey === 'EAC') {
         return finrap_tooltip_formula_html([
             ['type' => 'text', 'text' => LOC('report.tooltip.fallback')],
-            ['type' => 'ref', 'table' => FINRAP_BUDGET_HOURS_ENTITY_SET, 'field' => FINRAP_BUDGET_COST_FIELD],
+            ['type' => 'ref', 'table' => FINRAP_PROJECT_TASK_ENTITY_SET, 'field' => FINRAP_PROJECT_TASK_BASELINE_COST_FIELD],
             ['type' => 'text', 'text' => LOC('report.tooltip.fallback_close')],
         ]);
     }
@@ -131,7 +132,7 @@ function finrap_cost_group_value_tooltip_html(string $columnKey): string
 
     if ($columnKey === 'Entered_Obligations') {
         return finrap_tooltip_formula_html([
-            ['type' => 'ref', 'table' => 'PurchaseLines', 'field' => 'Line_Amount'],
+            ['type' => 'ref', 'table' => FINRAP_PROJECT_TASK_ENTITY_SET, 'field' => FINRAP_PROJECT_TASK_PURCHASES_FIELD],
         ]);
     }
 
@@ -146,7 +147,7 @@ function finrap_cost_group_value_tooltip_html(string $columnKey): string
 
     if ($columnKey === 'Variance_Budget_EAC') {
         return finrap_tooltip_formula_html([
-            ['type' => 'ref', 'table' => FINRAP_BUDGET_HOURS_ENTITY_SET, 'field' => FINRAP_BUDGET_COST_FIELD],
+            ['type' => 'ref', 'table' => FINRAP_PROJECT_TASK_ENTITY_SET, 'field' => FINRAP_PROJECT_TASK_BASELINE_COST_FIELD],
             ['type' => 'text', 'text' => ' - '],
             ['type' => 'text', 'text' => LOC('report.col.eac')],
         ]);
@@ -271,7 +272,9 @@ function finrap_render_cost_group_table(array $taskRows, bool $totalsOnly = fals
         $rowClass = '';
         if ($isTotalRow) {
             $rowClass = 'is-total-row';
-            if (preg_match('/^\d{3}-000-000$/', $taskCode) === 1) {
+            if (finrap_is_project_root_total_task_code($taskCode)) {
+                $rowClass .= ' is-major-total-row is-root-total-row';
+            } elseif (preg_match('/^\d{3}-000-000$/', $taskCode) === 1) {
                 $rowClass .= ' is-major-total-row';
             } elseif (preg_match('/^\d{3}-\d{3}-000$/', $taskCode) === 1) {
                 $rowClass .= ' is-minor-total-row';
@@ -480,19 +483,25 @@ $orderReference = (string) ($project['Your_Reference'] ?? $project['LVS_Your_ref
 $createdAt = (string) ($report['fetched_at'] ?? '');
 $createdAtFormatted = finrap_format_report_datetime($createdAt);
 $contractValue = (float) ($modal['contract_value'] ?? 0.0);
-$totalDirectCost = (float) ($summary['expected_costs'] ?? 0.0);
-$grossProfit = $contractValue - $totalDirectCost;
-
+$headerMetricRows = is_array($modal['header_metric_rows'] ?? null) ? $modal['header_metric_rows'] : [[
+    'type' => 'PRJ',
+    'contract_value' => $contractValue,
+    'is_project_row' => true,
+]];
+$showHeaderTypeColumn = finrap_header_table_has_change_orders($headerMetricRows);
 $taskRowsTotal = is_array($modal['task_rows_total'] ?? null) ? $modal['task_rows_total'] : [];
 $summaryTotals = finrap_get_report_summary_totals($taskRows);
+$budgetCostTotal = (float) ($summaryTotals['Budget_Cost'] ?? 0.0);
+$budgetRevenueTotal = (float) ($summaryTotals['Budget_Revenue'] ?? 0.0);
+$totalDirectCost = $budgetCostTotal;
+$grossProfit = $contractValue - $totalDirectCost;
 
 $bookedCostTotal = (float) ($summaryTotals['Booked_Cost'] ?? 0.0);
 $eacTotal = (float) ($summaryTotals['EAC'] ?? 0.0);
-$budgetCostTotal = (float) ($summaryTotals['Budget_Cost'] ?? 0.0);
 $obligationTotal = (float) ($summaryTotals['Entered_Obligations'] ?? 0.0);
 $variance = finance_to_float($summaryTotals['Variance_Budget_EAC'] ?? finance_calculate_result($budgetCostTotal, $eacTotal));
 $orderResult = $grossProfit + $variance;
-$installmentsInvoiced = (float) ($summary['total_revenue'] ?? 0.0);
+$installmentsInvoiced = (float) ($modal['contract_invoiced_total'] ?? $summary['total_revenue'] ?? 0.0);
 $installmentsReceived = (float) ($modal['installments_received'] ?? 0.0);
 
 $hoursBudget = (float) ($modal['hours_budget'] ?? 0.0);
@@ -541,9 +550,9 @@ $tooltipOrderResultPct = finrap_tooltip_formula_html([
     ['type' => 'ref', 'table' => 'FactureerbareProjectPlanningsRegels', 'field' => 'Line_Amount_LCY'],
 ]);
 $tooltipVariancePct = finrap_tooltip_formula_html([
-    ['type' => 'ref', 'table' => FINRAP_BUDGET_HOURS_ENTITY_SET, 'field' => FINRAP_BUDGET_COST_FIELD],
+    ['type' => 'ref', 'table' => FINRAP_PROJECT_TASK_ENTITY_SET, 'field' => FINRAP_PROJECT_TASK_BASELINE_COST_FIELD],
     ['type' => 'text', 'text' => ' / '],
-    ['type' => 'ref', 'table' => 'FactureerbareProjectPlanningsRegels', 'field' => 'Line_Amount_LCY'],
+    ['type' => 'ref', 'table' => FINRAP_PROJECT_TASK_ENTITY_SET, 'field' => FINRAP_PROJECT_TASK_CONTRACT_FIELD],
 ]);
 $tooltipExpVariance = finrap_tooltip_formula_html([
     ['type' => 'text', 'text' => LOC('report.col.budget_cost')],
@@ -613,26 +622,30 @@ $tooltipSalesManager = finrap_tooltip_formula_html([
     ['type' => 'ref', 'table' => 'Projecten', 'field' => 'KVT_Sales_Person_Code'],
 ]);
 $tooltipContractValue = finrap_tooltip_formula_html([
-    ['type' => 'ref', 'table' => 'FactureerbareProjectPlanningsRegels', 'field' => 'Line_Amount_LCY'],
+    ['type' => 'ref', 'table' => FINRAP_PROJECT_TASK_ENTITY_SET, 'field' => FINRAP_PROJECT_TASK_CONTRACT_FIELD],
+]);
+$tooltipChangeOrderContractValue = finrap_tooltip_formula_html([
+    ['type' => 'ref', 'table' => FINRAP_PROJECT_TASK_ENTITY_SET, 'field' => FINRAP_PROJECT_TASK_CONTRACT_FIELD],
+    ['type' => 'text', 'text' => ' (' . LOC('report.tooltip.header.change_order_contract') . ')'],
 ]);
 $tooltipTotalDirectCost = finrap_tooltip_formula_html([
-    ['type' => 'ref', 'table' => 'ProjectFinanceForecast', 'field' => 'expected_costs'],
+    ['type' => 'ref', 'table' => FINRAP_PROJECT_TASK_ENTITY_SET, 'field' => FINRAP_PROJECT_TASK_BASELINE_COST_FIELD],
 ]);
 $tooltipGrossProfit = finrap_tooltip_formula_html([
-    ['type' => 'ref', 'table' => 'FactureerbareProjectPlanningsRegels', 'field' => 'Line_Amount_LCY'],
+    ['type' => 'ref', 'table' => FINRAP_PROJECT_TASK_ENTITY_SET, 'field' => FINRAP_PROJECT_TASK_CONTRACT_FIELD],
     ['type' => 'text', 'text' => ' - '],
-    ['type' => 'ref', 'table' => 'ProjectFinanceForecast', 'field' => 'expected_costs'],
+    ['type' => 'ref', 'table' => FINRAP_PROJECT_TASK_ENTITY_SET, 'field' => FINRAP_PROJECT_TASK_BASELINE_COST_FIELD],
 ]);
 $tooltipVarianceValue = finrap_tooltip_formula_html([
-    ['type' => 'ref', 'table' => FINRAP_BUDGET_HOURS_ENTITY_SET, 'field' => FINRAP_BUDGET_COST_FIELD],
+    ['type' => 'ref', 'table' => FINRAP_PROJECT_TASK_ENTITY_SET, 'field' => FINRAP_PROJECT_TASK_BASELINE_COST_FIELD],
     ['type' => 'text', 'text' => ' - '],
     ['type' => 'text', 'text' => LOC('report.col.eac')],
 ]);
 $tooltipOrderResult = finrap_tooltip_formula_html([
-    ['type' => 'text', 'text' => '(Contract Value - Total Direct Cost) + Variance'],
+    ['type' => 'text', 'text' => '(Contract Value - VC Costs) + Variance'],
 ]);
 $tooltipInstallmentsInvoiced = finrap_tooltip_formula_html([
-    ['type' => 'ref', 'table' => 'ProjectFinanceTotals', 'field' => 'total_revenue'],
+    ['type' => 'ref', 'table' => FINRAP_PROJECT_TASK_ENTITY_SET, 'field' => FINRAP_PROJECT_TASK_INVOICED_PRICE_FIELD],
 ]);
 $tooltipInstallmentsReceived = finrap_tooltip_formula_html([
     ['type' => 'ref', 'table' => 'Customer_Ledger_Entries', 'field' => 'Amount_LCY'],
@@ -938,12 +951,31 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
             background: #cfe0fb;
         }
 
+        .project-cost-group-table tbody tr.is-root-total-row td {
+            background: #b8d0f0;
+        }
+
         .project-cost-group-table tbody tr.is-minor-total-row td {
             background: #eff6ff;
         }
 
         .project-cost-group-table tbody tr.is-zero-total-hidden {
             display: none;
+        }
+
+        .project-metric-table tbody td.metric-type-cell,
+        .project-metric-table thead th.metric-type-cell {
+            text-align: left;
+            white-space: nowrap;
+            font-weight: 700;
+        }
+
+        .project-metric-table tbody td.metric-empty-cell {
+            background: #f8fafc;
+        }
+
+        .project-metric-table tbody tr.is-change-order-header-row td {
+            background: #f8fafc;
         }
 
         .project-metric-table tbody td.is-positive,
@@ -1740,7 +1772,11 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                         <table class="project-metric-table">
                             <thead>
                                 <tr>
+                                    <?php if ($showHeaderTypeColumn): ?>
+                                    <th class="metric-type-cell" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.header.type'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.header.type'), ENT_QUOTES) ?></th>
+                                    <?php endif; ?>
                                     <th class="is-right" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.contract_value'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.contract_value'), ENT_QUOTES) ?></th>
+                                    <th class="is-right" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.total_budget_revenue'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.col.budget_revenue'), ENT_QUOTES) ?></th>
                                     <th class="is-right" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.total_direct_cost'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.total_direct_cost'), ENT_QUOTES) ?>
                                     </th>
                                     <th class="is-right" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.gross_profit'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.gross_profit'), ENT_QUOTES) ?>
@@ -1756,32 +1792,62 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                                 </tr>
                             </thead>
                             <tbody>
-                                <tr>
-                                    <td class="is-right <?= finrap_currency_sign_class($contractValue) ?>">
-                                        <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($contractValue)), $tooltipContractValue) ?>
+                                <?php foreach ($headerMetricRows as $headerMetricRow): ?>
+                                    <?php
+                                    if (!is_array($headerMetricRow)) {
+                                        continue;
+                                    }
+
+                                    $isProjectHeaderRow = (bool) ($headerMetricRow['is_project_row'] ?? false);
+                                    $headerType = trim((string) ($headerMetricRow['type'] ?? ''));
+                                    $headerContractValue = finance_to_float($headerMetricRow['contract_value'] ?? 0.0);
+                                    $headerContractTooltip = $isProjectHeaderRow ? $tooltipContractValue : $tooltipChangeOrderContractValue;
+                                    $headerBudgetRevenue = finance_to_float($headerMetricRow['budget_revenue'] ?? ($isProjectHeaderRow ? $budgetRevenueTotal : 0.0));
+                                    $headerTotalDirectCost = finance_to_float($headerMetricRow['total_direct_cost'] ?? ($isProjectHeaderRow ? $totalDirectCost : 0.0));
+                                    $headerGrossProfit = finance_to_float($headerMetricRow['gross_profit'] ?? ($isProjectHeaderRow ? $grossProfit : ($headerContractValue - $headerTotalDirectCost)));
+                                    $headerBookedCost = finance_to_float($headerMetricRow['booked_cost'] ?? ($isProjectHeaderRow ? $bookedCostTotal : 0.0));
+                                    $headerObligations = finance_to_float($headerMetricRow['entered_obligations'] ?? ($isProjectHeaderRow ? $obligationTotal : 0.0));
+                                    $headerOrderResult = finance_to_float($headerMetricRow['order_result'] ?? ($isProjectHeaderRow ? $orderResult : 0.0));
+                                    $headerInstallmentsInvoiced = finance_to_float($headerMetricRow['installments_invoiced'] ?? ($isProjectHeaderRow ? $installmentsInvoiced : 0.0));
+                                    $headerInstallmentsReceived = array_key_exists('installments_received', $headerMetricRow)
+                                        ? finance_to_float($headerMetricRow['installments_received'])
+                                        : ($isProjectHeaderRow ? $installmentsReceived : null);
+                                    ?>
+                                <tr<?= $isProjectHeaderRow ? ' class="is-project-header-row"' : ' class="is-change-order-header-row"' ?>>
+                                    <?php if ($showHeaderTypeColumn): ?>
+                                    <td class="metric-type-cell"><?= htmlspecialchars($headerType !== '' ? $headerType : 'PRJ', ENT_QUOTES) ?></td>
+                                    <?php endif; ?>
+                                    <td class="is-right <?= finrap_currency_sign_class($headerContractValue) ?>">
+                                        <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($headerContractValue)), $headerContractTooltip) ?>
                                     </td>
-                                    <td class="is-right <?= finrap_currency_sign_class($totalDirectCost) ?>">
-                                        <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($totalDirectCost)), $tooltipTotalDirectCost) ?>
+                                    <td class="is-right <?= finrap_currency_sign_class($headerBudgetRevenue) ?>">
+                                        <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($headerBudgetRevenue)), finrap_cost_group_value_tooltip_html('Budget_Revenue')) ?>
                                     </td>
-                                    <td class="is-right <?= finrap_currency_sign_class($grossProfit) ?>" id="metricGrossProfit">
-                                        <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($grossProfit)), $tooltipGrossProfit) ?>
+                                    <td class="is-right <?= finrap_currency_sign_class($headerTotalDirectCost) ?>"<?= $isProjectHeaderRow ? ' id="metricTotalDirectCost"' : '' ?>>
+                                        <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($headerTotalDirectCost)), $tooltipTotalDirectCost) ?>
                                     </td>
-                                    <td class="is-right <?= finrap_currency_sign_class($bookedCostTotal) ?>" id="metricBookedCost">
-                                        <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($bookedCostTotal)), finrap_cost_group_value_tooltip_html('Booked_Cost')) ?>
+                                    <td class="is-right <?= finrap_currency_sign_class($headerGrossProfit) ?>"<?= $isProjectHeaderRow ? ' id="metricGrossProfit"' : '' ?>>
+                                        <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($headerGrossProfit)), $tooltipGrossProfit) ?>
                                     </td>
-                                    <td class="is-right <?= finrap_currency_sign_class($obligationTotal) ?>" id="metricObligations">
-                                        <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($obligationTotal)), finrap_cost_group_value_tooltip_html('Entered_Obligations')) ?>
+                                    <td class="is-right <?= finrap_currency_sign_class($headerBookedCost) ?>"<?= $isProjectHeaderRow ? ' id="metricBookedCost"' : '' ?>>
+                                        <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($headerBookedCost)), finrap_cost_group_value_tooltip_html('Booked_Cost')) ?>
                                     </td>
-                                    <td class="is-right <?= finrap_currency_sign_class($orderResult) ?>" id="metricOrderResult">
-                                        <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($orderResult)), $tooltipOrderResult) ?>
+                                    <td class="is-right <?= finrap_currency_sign_class($headerObligations) ?>"<?= $isProjectHeaderRow ? ' id="metricObligations"' : '' ?>>
+                                        <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($headerObligations)), finrap_cost_group_value_tooltip_html('Entered_Obligations')) ?>
                                     </td>
-                                    <td class="is-right <?= finrap_currency_sign_class($installmentsInvoiced) ?>">
-                                        <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($installmentsInvoiced)), $tooltipInstallmentsInvoiced) ?>
+                                    <td class="is-right <?= finrap_currency_sign_class($headerOrderResult) ?>"<?= $isProjectHeaderRow ? ' id="metricOrderResult"' : '' ?>>
+                                        <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($headerOrderResult)), $tooltipOrderResult) ?>
                                     </td>
-                                    <td class="is-right <?= finrap_currency_sign_class($installmentsReceived) ?>">
-                                        <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($installmentsReceived)), $tooltipInstallmentsReceived) ?>
+                                    <td class="is-right <?= finrap_currency_sign_class($headerInstallmentsInvoiced) ?>">
+                                        <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($headerInstallmentsInvoiced)), $tooltipInstallmentsInvoiced) ?>
+                                    </td>
+                                    <td class="is-right <?= $headerInstallmentsReceived === null ? 'metric-empty-cell' : finrap_currency_sign_class($headerInstallmentsReceived) ?>">
+                                        <?php if ($headerInstallmentsReceived !== null): ?>
+                                        <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($headerInstallmentsReceived)), $tooltipInstallmentsReceived) ?>
+                                        <?php endif; ?>
                                     </td>
                                 </tr>
+                                <?php endforeach; ?>
                             </tbody>
                         </table>
                     </section>
@@ -2332,7 +2398,7 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                     const bookedCost = Number(summaryTotals.booked_cost || 0);
                     const obligations = Number(summaryTotals.entered_obligations || 0);
                     const variance = Number(summaryTotals.variance_budget_eac || (budgetCost - eac));
-                    const grossProfit = Number(finrapContext.contractValue || 0) - Number(finrapContext.totalDirectCost || 0);
+                    const grossProfit = Number(finrapContext.contractValue || 0) - Number(summaryTotals.budget_cost || 0);
                     const orderResult = grossProfit + variance;
                     const pocBaseline = calculatePocPercent(bookedCost, budgetCost);
                     const pocEac = calculatePocPercent(bookedCost, eac);
@@ -2342,6 +2408,7 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                     const expVariance = budgetCost - eac;
 
                     updateMetricCell('metricBudgetCost', budgetCost);
+                    updateMetricCell('metricGrossProfit', grossProfit);
                     updateMetricCell('metricBookedCost', bookedCost);
                     updateMetricCell('metricObligations', obligations);
                     updateMetricCell('metricOrderResult', orderResult);

@@ -12,12 +12,22 @@ require_once __DIR__ . '/auth_helper.php';
  */
 const FINRAP_FORMATTED_TASK_NOS_ONLY = true;
 const FINRAP_GLOBAL_TOTAL_TASK_NO = '000-000-000';
+const FINRAP_PROJECT_ROOT_TOTAL_TASK_CODE = '000';
 
 const FINRAP_BUDGET_HOURS_ENTITY_SET = 'JobBaselineLines';
 const FINRAP_BUDGET_HOURS_FIELD = 'Quantity';
 const FINRAP_BUDGET_HOURS_FILTER_BASELINE_FIELD = 'Baseline_Version_in_Filter';
 const FINRAP_BUDGET_COST_FIELD = 'Total_Cost';
-const FINRAP_BUDGET_REVENUE_FIELD = 'Line_Amount';
+const FINRAP_BUDGET_REVENUE_FIELD = 'Total_Price_LCY';
+const FINRAP_BUDGET_REVENUE_TYPE = 'GB-rekening';
+const FINRAP_BUDGET_REVENUE_NO = '800000';
+const FINRAP_PROJECT_TASK_ENTITY_SET = 'ProjectTaken';
+const FINRAP_PROJECT_TASK_ENTITY_SET_FALLBACK = 'ProjectenJobTaskLines';
+const FINRAP_PROJECT_TASK_CONTRACT_FIELD = 'LVS_Contract_Total_Price_2';
+const FINRAP_PROJECT_TASK_CHANGE_ORDER_FIELD = 'LVS_Job_Change_Order_No';
+const FINRAP_PROJECT_TASK_BASELINE_COST_FIELD = 'LVS_Baseline_Total_Cost';
+const FINRAP_PROJECT_TASK_PURCHASES_FIELD = 'LVS_Registered_Purchases_Amt';
+const FINRAP_PROJECT_TASK_INVOICED_PRICE_FIELD = 'Contract_Invoiced_Price';
 const FINRAP_BUDGET_HOURS_FILTER_TYPE_FIELD = 'Type';
 const FINRAP_BUDGET_HOURS_FILTER_RESOURCE_TYPE_FIELD = 'Resource_Type';
 const FINRAP_BUDGET_HOURS_FILTER_UOM_FIELD = 'Unit_of_Measure_Code';
@@ -1756,45 +1766,65 @@ function finrap_fetch_budget_hours_total(
     return null;
 }
 
-function finrap_fetch_baseline_amounts_by_task(
+function finrap_baseline_row_counts_as_budget_revenue(array $baselineRow): bool
+{
+    if (trim(FINRAP_BUDGET_REVENUE_TYPE) === '' || trim(FINRAP_BUDGET_REVENUE_NO) === '') {
+        return false;
+    }
+
+    $type = trim((string) ($baselineRow['Type'] ?? ''));
+    $no = trim((string) ($baselineRow['No'] ?? ''));
+
+    return strcasecmp($type, FINRAP_BUDGET_REVENUE_TYPE) === 0
+        && $no === FINRAP_BUDGET_REVENUE_NO;
+}
+
+function finrap_fetch_filtered_baseline_rows(
     string $baseUrl,
     string $environment,
     string $company,
     array $auth,
     string $projectFilter,
-    array $allowedTaskKeys,
     int $ttl
 ): array {
-    $emptyResult = ['costs' => [], 'revenue' => []];
     if (trim(FINRAP_BUDGET_HOURS_ENTITY_SET) === '') {
-        return $emptyResult;
+        return [];
     }
 
-    $selectFields = ['Job_Task_No'];
-    if (trim(FINRAP_BUDGET_COST_FIELD) !== '') {
-        $selectFields[] = FINRAP_BUDGET_COST_FIELD;
-    }
+    $selectFields = ['Job_Task_No', 'Type', 'No'];
     if (trim(FINRAP_BUDGET_REVENUE_FIELD) !== '') {
         $selectFields[] = FINRAP_BUDGET_REVENUE_FIELD;
     }
 
     if (count($selectFields) === 1) {
-        return $emptyResult;
+        return [];
     }
 
     $baselineFilter = $projectFilter
         . ' and ' . FINRAP_BUDGET_HOURS_FILTER_BASELINE_FIELD . ' eq true';
+
+    if (trim(FINRAP_BUDGET_REVENUE_TYPE) !== '') {
+        $baselineFilter .= " and Type eq '" . str_replace("'", "''", FINRAP_BUDGET_REVENUE_TYPE) . "'";
+    }
+
+    if (trim(FINRAP_BUDGET_REVENUE_NO) !== '') {
+        $baselineFilter .= " and No eq '" . str_replace("'", "''", FINRAP_BUDGET_REVENUE_NO) . "'";
+    }
 
     try {
         $baselineUrl = finrap_company_entity_url_with_query($baseUrl, $environment, $company, FINRAP_BUDGET_HOURS_ENTITY_SET, [
             '$select' => implode(',', $selectFields),
             '$filter' => $baselineFilter,
         ]);
-        $baselineRows = odata_get_all($baselineUrl, $auth, $ttl);
-    } catch (Throwable $ignoredBaselineLoadError) {
-        return $emptyResult;
-    }
 
+        return odata_get_all($baselineUrl, $auth, $ttl);
+    } catch (Throwable $ignoredBaselineLoadError) {
+        return [];
+    }
+}
+
+function finrap_parse_baseline_amounts_by_task(array $baselineRows, array $allowedTaskKeys): array
+{
     $allowedLookup = [];
     foreach ($allowedTaskKeys as $allowedTaskKey) {
         if (!is_string($allowedTaskKey) || trim($allowedTaskKey) === '') {
@@ -1824,14 +1854,7 @@ function finrap_fetch_baseline_amounts_by_task(
             continue;
         }
 
-        if (trim(FINRAP_BUDGET_COST_FIELD) !== '') {
-            $costsByTask[$taskKey] = finance_add_amount(
-                (float) ($costsByTask[$taskKey] ?? 0.0),
-                finance_to_float($baselineRow[FINRAP_BUDGET_COST_FIELD] ?? 0.0)
-            );
-        }
-
-        if (trim(FINRAP_BUDGET_REVENUE_FIELD) !== '') {
+        if (trim(FINRAP_BUDGET_REVENUE_FIELD) !== '' && finrap_baseline_row_counts_as_budget_revenue($baselineRow)) {
             $revenueByTask[$taskKey] = finance_add_amount(
                 (float) ($revenueByTask[$taskKey] ?? 0.0),
                 finance_to_float($baselineRow[FINRAP_BUDGET_REVENUE_FIELD] ?? 0.0)
@@ -1843,6 +1866,774 @@ function finrap_fetch_baseline_amounts_by_task(
         'costs' => $costsByTask,
         'revenue' => $revenueByTask,
     ];
+}
+
+function finrap_project_task_entity_select_fields(string $entitySet): array
+{
+    $selectFields = [
+        'Job_No',
+        'Job_Task_No',
+        FINRAP_PROJECT_TASK_CONTRACT_FIELD,
+        FINRAP_PROJECT_TASK_CHANGE_ORDER_FIELD,
+    ];
+
+    if (strcasecmp(trim($entitySet), FINRAP_PROJECT_TASK_ENTITY_SET) === 0) {
+        $selectFields[] = FINRAP_PROJECT_TASK_BASELINE_COST_FIELD;
+        $selectFields[] = FINRAP_PROJECT_TASK_PURCHASES_FIELD;
+        $selectFields[] = FINRAP_PROJECT_TASK_INVOICED_PRICE_FIELD;
+    }
+
+    return $selectFields;
+}
+
+function finrap_project_task_row_matches_project(array $projectTaskRow, string $projectNo): bool
+{
+    $expectedProjectNo = trim($projectNo);
+    if ($expectedProjectNo === '') {
+        return true;
+    }
+
+    $rowProjectNo = trim((string) ($projectTaskRow['Job_No'] ?? ''));
+    if ($rowProjectNo === '') {
+        return false;
+    }
+
+    return strcasecmp($rowProjectNo, $expectedProjectNo) === 0;
+}
+
+function finrap_parse_project_task_amounts_by_task(
+    array $projectTaskRows,
+    array $allowedTaskKeys,
+    string $projectNo,
+    string $fieldName
+): array {
+    $fieldName = trim($fieldName);
+    if ($fieldName === '') {
+        return [];
+    }
+
+    $allowedLookup = [];
+    foreach ($allowedTaskKeys as $allowedTaskKey) {
+        if (!is_string($allowedTaskKey) || trim($allowedTaskKey) === '') {
+            continue;
+        }
+        $allowedLookup[strtolower(trim($allowedTaskKey))] = true;
+    }
+
+    $amountsByTask = [];
+    foreach ($projectTaskRows as $projectTaskRow) {
+        if (!is_array($projectTaskRow)) {
+            continue;
+        }
+
+        if (!finrap_project_task_row_matches_project($projectTaskRow, $projectNo)) {
+            continue;
+        }
+
+        $taskNo = trim((string) ($projectTaskRow['Job_Task_No'] ?? ''));
+        if ($taskNo === '') {
+            continue;
+        }
+
+        if (FINRAP_FORMATTED_TASK_NOS_ONLY && !finrap_is_formatted_task_no($taskNo)) {
+            continue;
+        }
+
+        $taskKey = strtolower($taskNo);
+        if ($allowedLookup !== [] && !isset($allowedLookup[$taskKey])) {
+            continue;
+        }
+
+        $amountsByTask[$taskKey] = finance_add_amount(
+            (float) ($amountsByTask[$taskKey] ?? 0.0),
+            finance_to_float($projectTaskRow[$fieldName] ?? 0.0)
+        );
+    }
+
+    return $amountsByTask;
+}
+
+function finrap_parse_project_task_baseline_costs_by_task(
+    array $projectTaskRows,
+    array $allowedTaskKeys,
+    string $projectNo = ''
+): array {
+    return finrap_parse_project_task_amounts_by_task(
+        $projectTaskRows,
+        $allowedTaskKeys,
+        $projectNo,
+        FINRAP_PROJECT_TASK_BASELINE_COST_FIELD
+    );
+}
+
+function finrap_parse_project_task_change_orders_by_task(array $projectTaskRows, string $projectNo = ''): array
+{
+    $changeOrderByTask = [];
+    foreach ($projectTaskRows as $projectTaskRow) {
+        if (!is_array($projectTaskRow)) {
+            continue;
+        }
+
+        if (!finrap_project_task_row_matches_project($projectTaskRow, $projectNo)) {
+            continue;
+        }
+
+        $taskNo = trim((string) ($projectTaskRow['Job_Task_No'] ?? ''));
+        if ($taskNo === '') {
+            continue;
+        }
+
+        if (FINRAP_FORMATTED_TASK_NOS_ONLY && !finrap_is_formatted_task_no($taskNo)) {
+            continue;
+        }
+
+        $changeOrderByTask[strtolower($taskNo)] = trim((string) ($projectTaskRow[FINRAP_PROJECT_TASK_CHANGE_ORDER_FIELD] ?? ''));
+    }
+
+    return $changeOrderByTask;
+}
+
+function finrap_task_row_matches_change_order_group(string $taskChangeOrder, string $groupChangeOrder): bool
+{
+    $groupChangeOrder = trim($groupChangeOrder);
+    $taskChangeOrder = trim($taskChangeOrder);
+
+    if ($groupChangeOrder === '') {
+        return $taskChangeOrder === '';
+    }
+
+    return strcasecmp($taskChangeOrder, $groupChangeOrder) === 0;
+}
+
+function finrap_is_project_root_total_task_code(string $taskCode): bool
+{
+    return strcasecmp(trim($taskCode), FINRAP_PROJECT_ROOT_TOTAL_TASK_CODE) === 0;
+}
+
+function finrap_find_project_root_total_row(array $taskRows): ?array
+{
+    $legacyGlobalTotalRow = null;
+    $majorTotalRows = [];
+
+    foreach ($taskRows as $taskRow) {
+        if (!is_array($taskRow) || !(bool) ($taskRow['Is_Total_Row'] ?? false)) {
+            continue;
+        }
+
+        $taskCode = trim((string) ($taskRow['Cost_Group_Code'] ?? ''));
+        if ($taskCode === '') {
+            continue;
+        }
+
+        if (finrap_is_project_root_total_task_code($taskCode)) {
+            return $taskRow;
+        }
+
+        if (strcasecmp($taskCode, FINRAP_GLOBAL_TOTAL_TASK_NO) === 0) {
+            $legacyGlobalTotalRow = $taskRow;
+            continue;
+        }
+
+        if (finrap_is_major_total_task_code($taskCode)) {
+            $majorTotalRows[] = $taskRow;
+        }
+    }
+
+    if ($legacyGlobalTotalRow !== null) {
+        return $legacyGlobalTotalRow;
+    }
+
+    if (count($majorTotalRows) === 1) {
+        return $majorTotalRows[0];
+    }
+
+    return null;
+}
+
+function finrap_collect_prj_header_task_keys(array $taskRows, array $changeOrderByTask): array
+{
+    $rootTotalRow = finrap_find_project_root_total_row($taskRows);
+    $range = null;
+    if ($rootTotalRow !== null) {
+        $range = finrap_parse_totaling_range((string) ($rootTotalRow['Totaling'] ?? ''));
+    }
+
+    $allowedKeys = [];
+    foreach ($taskRows as $taskRow) {
+        if (!is_array($taskRow) || !finrap_is_detail_task_row($taskRow)) {
+            continue;
+        }
+
+        $taskCode = trim((string) ($taskRow['Cost_Group_Code'] ?? ''));
+        if ($taskCode === '') {
+            continue;
+        }
+
+        if (FINRAP_FORMATTED_TASK_NOS_ONLY && !finrap_is_formatted_task_no($taskCode)) {
+            continue;
+        }
+
+        if ($range !== null && !finrap_task_no_in_range($taskCode, $range)) {
+            continue;
+        }
+
+        $taskKey = strtolower($taskCode);
+        if (trim((string) ($changeOrderByTask[$taskKey] ?? '')) !== '') {
+            continue;
+        }
+
+        $allowedKeys[$taskKey] = true;
+    }
+
+    if ($allowedKeys !== []) {
+        return array_keys($allowedKeys);
+    }
+
+    if ($rootTotalRow === null || $range === null) {
+        return finrap_collect_prj_header_task_keys_without_total_row($taskRows, $changeOrderByTask);
+    }
+
+    return [];
+}
+
+function finrap_collect_prj_header_task_keys_without_total_row(array $taskRows, array $changeOrderByTask): array
+{
+    $allowedKeys = [];
+    foreach ($taskRows as $taskRow) {
+        if (!is_array($taskRow) || !finrap_is_detail_task_row($taskRow)) {
+            continue;
+        }
+
+        $taskCode = trim((string) ($taskRow['Cost_Group_Code'] ?? ''));
+        if ($taskCode === '') {
+            continue;
+        }
+
+        if (FINRAP_FORMATTED_TASK_NOS_ONLY && !finrap_is_formatted_task_no($taskCode)) {
+            continue;
+        }
+
+        $taskKey = strtolower($taskCode);
+        if (trim((string) ($changeOrderByTask[$taskKey] ?? '')) !== '') {
+            continue;
+        }
+
+        $allowedKeys[$taskKey] = true;
+    }
+
+    return array_keys($allowedKeys);
+}
+
+function finrap_task_metrics_from_total_row(?array $totalRow): ?array
+{
+    if ($totalRow === null) {
+        return null;
+    }
+
+    $budgetCost = finance_to_float($totalRow['Budget_Cost'] ?? 0.0);
+    $eac = finance_to_float($totalRow['EAC'] ?? 0.0);
+
+    return [
+        'Budget_Revenue' => finance_to_float($totalRow['Budget_Revenue'] ?? 0.0),
+        'Budget_Cost' => $budgetCost,
+        'EAC' => $eac,
+        'Booked_Cost' => finance_to_float($totalRow['Booked_Cost'] ?? 0.0),
+        'Entered_Obligations' => finance_to_float($totalRow['Entered_Obligations'] ?? 0.0),
+        'Variance_Budget_EAC' => finance_to_float(
+            $totalRow['Variance_Budget_EAC'] ?? finance_calculate_result($budgetCost, $eac)
+        ),
+    ];
+}
+
+function finrap_sum_project_task_amount_for_task_keys(
+    array $projectTaskRows,
+    string $projectNo,
+    string $fieldName,
+    array $allowedTaskKeys,
+    bool $skipZeroContractForContractField = false
+): float {
+    $fieldName = trim($fieldName);
+    if ($fieldName === '' || $allowedTaskKeys === []) {
+        return 0.0;
+    }
+
+    $allowedLookup = [];
+    foreach ($allowedTaskKeys as $allowedTaskKey) {
+        if (!is_string($allowedTaskKey) || trim($allowedTaskKey) === '') {
+            continue;
+        }
+        $allowedLookup[strtolower(trim($allowedTaskKey))] = true;
+    }
+
+    if ($allowedLookup === []) {
+        return 0.0;
+    }
+
+    $total = 0.0;
+    foreach ($projectTaskRows as $projectTaskRow) {
+        if (!is_array($projectTaskRow)) {
+            continue;
+        }
+
+        if (!finrap_project_task_row_matches_project($projectTaskRow, $projectNo)) {
+            continue;
+        }
+
+        $taskNo = trim((string) ($projectTaskRow['Job_Task_No'] ?? ''));
+        if ($taskNo === '') {
+            continue;
+        }
+
+        if (FINRAP_FORMATTED_TASK_NOS_ONLY && !finrap_is_formatted_task_no($taskNo)) {
+            continue;
+        }
+
+        $taskKey = strtolower($taskNo);
+        if (!isset($allowedLookup[$taskKey])) {
+            continue;
+        }
+
+        if (
+            $skipZeroContractForContractField
+            && strcasecmp($fieldName, FINRAP_PROJECT_TASK_CONTRACT_FIELD) === 0
+            && abs(finance_to_float($projectTaskRow[FINRAP_PROJECT_TASK_CONTRACT_FIELD] ?? 0.0)) < 0.000001
+        ) {
+            continue;
+        }
+
+        $total = finance_add_amount($total, finance_to_float($projectTaskRow[$fieldName] ?? 0.0));
+    }
+
+    return $total;
+}
+
+function finrap_aggregate_detail_task_metrics_for_task_keys(array $detailTaskRows, array $allowedTaskKeys): array
+{
+    if ($allowedTaskKeys === []) {
+        return [
+            'Budget_Revenue' => 0.0,
+            'Budget_Cost' => 0.0,
+            'EAC' => 0.0,
+            'Booked_Cost' => 0.0,
+            'Entered_Obligations' => 0.0,
+            'Variance_Budget_EAC' => 0.0,
+        ];
+    }
+
+    $allowedLookup = [];
+    foreach ($allowedTaskKeys as $allowedTaskKey) {
+        if (!is_string($allowedTaskKey) || trim($allowedTaskKey) === '') {
+            continue;
+        }
+        $allowedLookup[strtolower(trim($allowedTaskKey))] = true;
+    }
+
+    $budgetRevenueTotal = 0.0;
+    $budgetTotal = 0.0;
+    $eacTotal = 0.0;
+    $bookedTotal = 0.0;
+    $obligationTotal = 0.0;
+    $varianceTotal = 0.0;
+
+    foreach ($detailTaskRows as $taskRow) {
+        if (!is_array($taskRow)) {
+            continue;
+        }
+
+        $taskKey = strtolower(trim((string) ($taskRow['Cost_Group_Code'] ?? '')));
+        if ($taskKey === '' || !isset($allowedLookup[$taskKey])) {
+            continue;
+        }
+
+        $budgetRevenueTotal = finance_add_amount($budgetRevenueTotal, finance_to_float($taskRow['Budget_Revenue'] ?? 0.0));
+        $budgetTotal = finance_add_amount($budgetTotal, finance_to_float($taskRow['Budget_Cost'] ?? 0.0));
+        $eacTotal = finance_add_amount($eacTotal, finance_to_float($taskRow['EAC'] ?? 0.0));
+        $bookedTotal = finance_add_amount($bookedTotal, finance_to_float($taskRow['Booked_Cost'] ?? 0.0));
+        $obligationTotal = finance_add_amount($obligationTotal, finance_to_float($taskRow['Entered_Obligations'] ?? 0.0));
+        $varianceTotal = finance_add_amount($varianceTotal, finance_to_float($taskRow['Variance_Budget_EAC'] ?? 0.0));
+    }
+
+    return [
+        'Budget_Revenue' => $budgetRevenueTotal,
+        'Budget_Cost' => $budgetTotal,
+        'EAC' => $eacTotal,
+        'Booked_Cost' => $bookedTotal,
+        'Entered_Obligations' => $obligationTotal,
+        'Variance_Budget_EAC' => $varianceTotal,
+    ];
+}
+
+function finrap_sum_project_task_amount_for_change_order_group(
+    array $projectTaskRows,
+    string $projectNo,
+    string $fieldName,
+    string $groupChangeOrder,
+    bool $skipZeroContractForContractField = false
+): float {
+    $fieldName = trim($fieldName);
+    if ($fieldName === '') {
+        return 0.0;
+    }
+
+    $total = 0.0;
+    foreach ($projectTaskRows as $projectTaskRow) {
+        if (!is_array($projectTaskRow)) {
+            continue;
+        }
+
+        if (!finrap_project_task_row_matches_project($projectTaskRow, $projectNo)) {
+            continue;
+        }
+
+        $taskNo = trim((string) ($projectTaskRow['Job_Task_No'] ?? ''));
+        if ($taskNo === '') {
+            continue;
+        }
+
+        if (FINRAP_FORMATTED_TASK_NOS_ONLY && !finrap_is_formatted_task_no($taskNo)) {
+            continue;
+        }
+
+        $taskChangeOrder = trim((string) ($projectTaskRow[FINRAP_PROJECT_TASK_CHANGE_ORDER_FIELD] ?? ''));
+        if (!finrap_task_row_matches_change_order_group($taskChangeOrder, $groupChangeOrder)) {
+            continue;
+        }
+
+        if (
+            $skipZeroContractForContractField
+            && strcasecmp($fieldName, FINRAP_PROJECT_TASK_CONTRACT_FIELD) === 0
+            && abs(finance_to_float($projectTaskRow[FINRAP_PROJECT_TASK_CONTRACT_FIELD] ?? 0.0)) < 0.000001
+        ) {
+            continue;
+        }
+
+        $total = finance_add_amount($total, finance_to_float($projectTaskRow[$fieldName] ?? 0.0));
+    }
+
+    return $total;
+}
+
+function finrap_aggregate_detail_task_metrics_for_change_order(
+    array $detailTaskRows,
+    array $changeOrderByTask,
+    string $groupChangeOrder
+): array {
+    $budgetRevenueTotal = 0.0;
+    $budgetTotal = 0.0;
+    $eacTotal = 0.0;
+    $bookedTotal = 0.0;
+    $obligationTotal = 0.0;
+    $varianceTotal = 0.0;
+
+    foreach ($detailTaskRows as $taskRow) {
+        if (!is_array($taskRow)) {
+            continue;
+        }
+
+        $taskKey = strtolower(trim((string) ($taskRow['Cost_Group_Code'] ?? '')));
+        if ($taskKey === '') {
+            continue;
+        }
+
+        $taskChangeOrder = trim((string) ($changeOrderByTask[$taskKey] ?? ''));
+        if (!finrap_task_row_matches_change_order_group($taskChangeOrder, $groupChangeOrder)) {
+            continue;
+        }
+
+        $budgetRevenueTotal = finance_add_amount($budgetRevenueTotal, finance_to_float($taskRow['Budget_Revenue'] ?? 0.0));
+        $budgetTotal = finance_add_amount($budgetTotal, finance_to_float($taskRow['Budget_Cost'] ?? 0.0));
+        $eacTotal = finance_add_amount($eacTotal, finance_to_float($taskRow['EAC'] ?? 0.0));
+        $bookedTotal = finance_add_amount($bookedTotal, finance_to_float($taskRow['Booked_Cost'] ?? 0.0));
+        $obligationTotal = finance_add_amount($obligationTotal, finance_to_float($taskRow['Entered_Obligations'] ?? 0.0));
+        $varianceTotal = finance_add_amount($varianceTotal, finance_to_float($taskRow['Variance_Budget_EAC'] ?? 0.0));
+    }
+
+    return [
+        'Budget_Revenue' => $budgetRevenueTotal,
+        'Budget_Cost' => $budgetTotal,
+        'EAC' => $eacTotal,
+        'Booked_Cost' => $bookedTotal,
+        'Entered_Obligations' => $obligationTotal,
+        'Variance_Budget_EAC' => $varianceTotal,
+    ];
+}
+
+function finrap_build_single_header_metric_row(
+    string $type,
+    bool $isProjectRow,
+    string $groupChangeOrder,
+    array $projectTaskRows,
+    array $allTaskRows,
+    array $detailTaskRows,
+    array $changeOrderByTask,
+    string $projectNo,
+    float $installmentsReceived
+): array {
+    if ($isProjectRow && $groupChangeOrder === '') {
+        $prjTaskKeys = finrap_collect_prj_header_task_keys($allTaskRows, $changeOrderByTask);
+        $contractValue = finrap_sum_project_task_amount_for_task_keys(
+            $projectTaskRows,
+            $projectNo,
+            FINRAP_PROJECT_TASK_CONTRACT_FIELD,
+            $prjTaskKeys,
+            true
+        );
+        $installmentsInvoiced = finrap_sum_project_task_amount_for_task_keys(
+            $projectTaskRows,
+            $projectNo,
+            FINRAP_PROJECT_TASK_INVOICED_PRICE_FIELD,
+            $prjTaskKeys
+        );
+        $taskMetrics = finrap_task_metrics_from_total_row(finrap_find_project_root_total_row($allTaskRows));
+        if ($taskMetrics === null) {
+            $taskMetrics = finrap_aggregate_detail_task_metrics_for_change_order(
+                $detailTaskRows,
+                $changeOrderByTask,
+                ''
+            );
+        }
+    } else {
+        $contractValue = finrap_sum_project_task_amount_for_change_order_group(
+            $projectTaskRows,
+            $projectNo,
+            FINRAP_PROJECT_TASK_CONTRACT_FIELD,
+            $groupChangeOrder,
+            true
+        );
+        $installmentsInvoiced = finrap_sum_project_task_amount_for_change_order_group(
+            $projectTaskRows,
+            $projectNo,
+            FINRAP_PROJECT_TASK_INVOICED_PRICE_FIELD,
+            $groupChangeOrder
+        );
+        $taskMetrics = finrap_aggregate_detail_task_metrics_for_change_order(
+            $detailTaskRows,
+            $changeOrderByTask,
+            $groupChangeOrder
+        );
+    }
+
+    $totalDirectCost = finance_to_float($taskMetrics['Budget_Cost'] ?? 0.0);
+    $grossProfit = $contractValue - $totalDirectCost;
+    $variance = finance_to_float($taskMetrics['Variance_Budget_EAC'] ?? 0.0);
+
+    $row = [
+        'type' => $type,
+        'is_project_row' => $isProjectRow,
+        'contract_value' => $contractValue,
+        'budget_revenue' => finance_to_float($taskMetrics['Budget_Revenue'] ?? 0.0),
+        'total_direct_cost' => $totalDirectCost,
+        'gross_profit' => $grossProfit,
+        'booked_cost' => finance_to_float($taskMetrics['Booked_Cost'] ?? 0.0),
+        'entered_obligations' => finance_to_float($taskMetrics['Entered_Obligations'] ?? 0.0),
+        'order_result' => $grossProfit + $variance,
+        'installments_invoiced' => $installmentsInvoiced,
+    ];
+
+    if ($isProjectRow) {
+        $row['installments_received'] = $installmentsReceived;
+    }
+
+    return $row;
+}
+
+function finrap_fetch_project_task_rows(
+    string $baseUrl,
+    string $environment,
+    string $company,
+    array $auth,
+    string $projectFilter,
+    int $ttl
+): array {
+    foreach ([FINRAP_PROJECT_TASK_ENTITY_SET, FINRAP_PROJECT_TASK_ENTITY_SET_FALLBACK] as $entitySet) {
+        $entitySet = trim($entitySet);
+        if ($entitySet === '') {
+            continue;
+        }
+
+        $selectFields = finrap_project_task_entity_select_fields($entitySet);
+        if ($selectFields === []) {
+            continue;
+        }
+
+        try {
+            $taskUrl = finrap_company_entity_url_with_query($baseUrl, $environment, $company, $entitySet, [
+                '$select' => implode(',', $selectFields),
+                '$filter' => $projectFilter,
+            ]);
+
+            return odata_get_all($taskUrl, $auth, $ttl);
+        } catch (Throwable $ignoredProjectTaskLoadError) {
+            continue;
+        }
+    }
+
+    return [];
+}
+
+function finrap_parse_project_task_contract_groups(array $projectTaskRows, string $projectNo = ''): array
+{
+    $projectContract = 0.0;
+    $changeOrders = [];
+    $contractByTask = [];
+    $changeOrderByTask = [];
+
+    foreach ($projectTaskRows as $projectTaskRow) {
+        if (!is_array($projectTaskRow)) {
+            continue;
+        }
+
+        if (!finrap_project_task_row_matches_project($projectTaskRow, $projectNo)) {
+            continue;
+        }
+
+        $taskNo = trim((string) ($projectTaskRow['Job_Task_No'] ?? ''));
+        if ($taskNo === '') {
+            continue;
+        }
+
+        if (FINRAP_FORMATTED_TASK_NOS_ONLY && !finrap_is_formatted_task_no($taskNo)) {
+            continue;
+        }
+
+        $contractPrice = finance_to_float($projectTaskRow[FINRAP_PROJECT_TASK_CONTRACT_FIELD] ?? 0.0);
+        if (abs($contractPrice) < 0.000001) {
+            continue;
+        }
+
+        $taskKey = strtolower($taskNo);
+        $contractByTask[$taskKey] = finance_add_amount(
+            (float) ($contractByTask[$taskKey] ?? 0.0),
+            $contractPrice
+        );
+        $changeOrderByTask[$taskKey] = trim((string) ($projectTaskRow[FINRAP_PROJECT_TASK_CHANGE_ORDER_FIELD] ?? ''));
+    }
+
+    foreach ($contractByTask as $taskKey => $contractPrice) {
+        $changeOrderNo = trim((string) ($changeOrderByTask[$taskKey] ?? ''));
+        if ($changeOrderNo === '') {
+            $projectContract = finance_add_amount($projectContract, $contractPrice);
+            continue;
+        }
+
+        $changeOrders[$changeOrderNo] = finance_add_amount(
+            (float) ($changeOrders[$changeOrderNo] ?? 0.0),
+            $contractPrice
+        );
+    }
+
+    if ($changeOrders !== []) {
+        uksort($changeOrders, static function (string $left, string $right): int {
+            return strnatcasecmp($left, $right);
+        });
+    }
+
+    return [
+        'project_contract' => $projectContract,
+        'change_orders' => $changeOrders,
+    ];
+}
+
+function finrap_build_header_metric_rows(
+    array $projectTaskRows,
+    array $taskRows,
+    string $projectNo,
+    array $contractGroups,
+    float $installmentsReceived
+): array {
+    $changeOrderByTask = finrap_parse_project_task_change_orders_by_task($projectTaskRows, $projectNo);
+    $detailTaskRows = array_values(array_filter($taskRows, static function ($taskRow): bool {
+        return is_array($taskRow) && finrap_is_detail_task_row($taskRow);
+    }));
+
+    $rows = [
+        finrap_build_single_header_metric_row(
+            'PRJ',
+            true,
+            '',
+            $projectTaskRows,
+            $taskRows,
+            $detailTaskRows,
+            $changeOrderByTask,
+            $projectNo,
+            $installmentsReceived
+        ),
+    ];
+
+    $changeOrders = is_array($contractGroups['change_orders'] ?? null) ? $contractGroups['change_orders'] : [];
+    foreach ($changeOrders as $changeOrderNo => $contractValue) {
+        unset($contractValue);
+
+        $typeLabel = trim((string) $changeOrderNo);
+        if ($typeLabel === '') {
+            continue;
+        }
+
+        $rows[] = finrap_build_single_header_metric_row(
+            $typeLabel,
+            false,
+            $typeLabel,
+            $projectTaskRows,
+            $taskRows,
+            $detailTaskRows,
+            $changeOrderByTask,
+            $projectNo,
+            0.0
+        );
+    }
+
+    return $rows;
+}
+
+function finrap_header_table_has_change_orders(array $headerMetricRows): bool
+{
+    foreach ($headerMetricRows as $row) {
+        if (is_array($row) && !($row['is_project_row'] ?? true)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function finrap_fetch_baseline_amounts_by_task(
+    string $baseUrl,
+    string $environment,
+    string $company,
+    array $auth,
+    string $projectFilter,
+    array $allowedTaskKeys,
+    int $ttl
+): array {
+    return finrap_parse_baseline_amounts_by_task(
+        finrap_fetch_filtered_baseline_rows($baseUrl, $environment, $company, $auth, $projectFilter, $ttl),
+        $allowedTaskKeys
+    );
+}
+
+function finrap_fetch_project_task_contract_groups(
+    string $baseUrl,
+    string $environment,
+    string $company,
+    array $auth,
+    string $projectFilter,
+    int $ttl,
+    ?array $projectTaskRows = null
+): array {
+    if ($projectTaskRows === null) {
+        $projectTaskRows = finrap_fetch_project_task_rows($baseUrl, $environment, $company, $auth, $projectFilter, $ttl);
+    }
+
+    return finrap_parse_project_task_contract_groups($projectTaskRows, finrap_extract_project_no_from_filter($projectFilter));
+}
+
+function finrap_extract_project_no_from_filter(string $projectFilter): string
+{
+    if (preg_match("/Job_No\\s+eq\\s+'((?:''|[^'])*)'/i", trim($projectFilter), $matches) !== 1) {
+        return '';
+    }
+
+    return str_replace("''", "'", (string) ($matches[1] ?? ''));
 }
 
 function finrap_fetch_baseline_costs_by_task(
@@ -1945,11 +2736,24 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
     $modal = [
         'project_no' => $projectNo,
         'contract_value' => 0.0,
+        'header_metric_rows' => [],
         'installments_received' => 0.0,
         'budget_cost_total' => 0.0,
         'task_rows' => [],
         'task_rows_total' => [],
     ];
+
+    $baselineRows = finrap_fetch_filtered_baseline_rows($baseUrl, $environment, $company, $auth, $projectFilter, $ttl);
+    $projectTaskRows = finrap_fetch_project_task_rows($baseUrl, $environment, $company, $auth, $projectFilter, $ttl);
+    $contractGroups = finrap_fetch_project_task_contract_groups(
+        $baseUrl,
+        $environment,
+        $company,
+        $auth,
+        $projectFilter,
+        $ttl,
+        $projectTaskRows
+    );
 
     try {
         $contractUrl = finrap_company_entity_url_with_query($baseUrl, $environment, $company, 'FactureerbareProjectPlanningsRegels', [
@@ -1973,11 +2777,6 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
         if (!$isFactureerbaar || $isForecast) {
             continue;
         }
-
-        $modal['contract_value'] = finance_add_amount(
-            (float) ($modal['contract_value'] ?? 0.0),
-            finance_to_float($contractRow['Line_Amount_LCY'] ?? 0.0)
-        );
 
         $termijnLines[] = [
             'line_no' => (int) ($contractRow['Line_No'] ?? 0),
@@ -2110,47 +2909,18 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
         );
     }
 
-    try {
-        $purchaseUrl = finrap_company_entity_url_with_query($baseUrl, $environment, $company, 'PurchaseLines', [
-            '$select' => 'Job_No,Job_Task_No,Line_Amount',
-            '$filter' => $projectFilter,
-        ]);
-        $purchaseRows = odata_get_all($purchaseUrl, $auth, $ttl);
-    } catch (Throwable $ignoredPurchaseLoadError) {
-        $purchaseRows = [];
-    }
-
-    foreach ($purchaseRows as $purchaseRow) {
-        if (!is_array($purchaseRow)) {
-            continue;
-        }
-
-        $taskNo = trim((string) ($purchaseRow['Job_Task_No'] ?? ''));
-        if ($taskNo === '') {
-            continue;
-        }
-
-        $taskKey = strtolower($taskNo);
-        if (!isset($taskRowsByKey[$taskKey])) {
-            continue;
-        }
-
-        $taskRowsByKey[$taskKey]['Entered_Obligations'] = finance_add_amount(
-            (float) ($taskRowsByKey[$taskKey]['Entered_Obligations'] ?? 0.0),
-            finance_to_float($purchaseRow['Line_Amount'] ?? 0.0)
-        );
-    }
-
-    $baselineAmountsByTask = finrap_fetch_baseline_amounts_by_task(
-        $baseUrl,
-        $environment,
-        $company,
-        $auth,
-        $projectFilter,
+    $baselineAmountsByTask = finrap_parse_baseline_amounts_by_task($baselineRows, array_keys($taskRowsByKey));
+    $baselineCostsByTask = finrap_parse_project_task_baseline_costs_by_task(
+        $projectTaskRows,
         array_keys($taskRowsByKey),
-        $ttl
+        $projectNo
     );
-    $baselineCostsByTask = is_array($baselineAmountsByTask['costs'] ?? null) ? $baselineAmountsByTask['costs'] : [];
+    $purchasesByTask = finrap_parse_project_task_amounts_by_task(
+        $projectTaskRows,
+        array_keys($taskRowsByKey),
+        $projectNo,
+        FINRAP_PROJECT_TASK_PURCHASES_FIELD
+    );
     $baselineRevenueByTask = is_array($baselineAmountsByTask['revenue'] ?? null) ? $baselineAmountsByTask['revenue'] : [];
     foreach ($taskRowsByKey as $taskKey => &$taskRow) {
         if (!is_array($taskRow) || (bool) ($taskRow['Is_Total_Row'] ?? false)) {
@@ -2159,6 +2929,7 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
 
         $taskRow['Budget_Cost'] = finance_to_float($baselineCostsByTask[$taskKey] ?? 0.0);
         $taskRow['Budget_Revenue'] = finance_to_float($baselineRevenueByTask[$taskKey] ?? 0.0);
+        $taskRow['Entered_Obligations'] = finance_to_float($purchasesByTask[$taskKey] ?? 0.0);
     }
     unset($taskRow);
 
@@ -2328,6 +3099,16 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
         'Is_Total_Row' => true,
     ];
     $modal['task_rows_global_total'] = $modal['task_rows_total'];
+    $modal['header_metric_rows'] = finrap_build_header_metric_rows(
+        $projectTaskRows,
+        $displayTaskRows,
+        $projectNo,
+        $contractGroups,
+        finance_to_float($modal['installments_received'] ?? 0.0)
+    );
+    $prjHeaderRow = is_array($modal['header_metric_rows'][0] ?? null) ? $modal['header_metric_rows'][0] : [];
+    $modal['contract_value'] = finance_to_float($prjHeaderRow['contract_value'] ?? 0.0);
+    $modal['contract_invoiced_total'] = finance_to_float($prjHeaderRow['installments_invoiced'] ?? 0.0);
 
     return $modal;
 }
@@ -2375,7 +3156,7 @@ function finrap_generate_month_for_project(string $company, string $projectNo, s
         'project' => $project,
         'summary' => [
             'total_costs' => (float) ($totals['costs'] ?? 0.0),
-            'total_revenue' => (float) ($totals['revenue'] ?? 0.0),
+            'total_revenue' => finance_to_float($modal['contract_invoiced_total'] ?? 0.0),
             'result' => (float) ($totals['resultaat'] ?? finance_calculate_result((float) ($totals['revenue'] ?? 0.0), (float) ($totals['costs'] ?? 0.0))),
             'expected_revenue' => (float) ($forecastTotals['expected_revenue'] ?? 0.0),
             'expected_costs' => (float) ($forecastTotals['expected_costs'] ?? 0.0),
