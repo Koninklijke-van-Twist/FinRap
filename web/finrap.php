@@ -40,6 +40,55 @@ function finrap_format_date_nl(string $isoDate): string
     return $dt->format('d-m-Y');
 }
 
+function finrap_format_date_display(string $isoDate): string
+{
+    $value = trim($isoDate);
+    if ($value === '' || finrap_is_bc_blank_date($value)) {
+        return '';
+    }
+
+    try {
+        $dt = new DateTimeImmutable($value);
+    } catch (Throwable $ignoredDateError) {
+        return $isoDate;
+    }
+
+    $monthNumber = $dt->format('m');
+    $monthKey = 'month_abbr.' . $monthNumber;
+    $monthLabel = LOC($monthKey);
+    if ($monthLabel === $monthKey) {
+        $monthLabel = LOC('month_lc.' . $monthNumber);
+    }
+
+    return $dt->format('j') . ' ' . $monthLabel . ' ' . $dt->format('Y');
+}
+
+function finrap_is_date_past(string $isoDate): bool
+{
+    $value = trim($isoDate);
+    if ($value === '' || finrap_is_bc_blank_date($value)) {
+        return false;
+    }
+
+    try {
+        $date = new DateTimeImmutable($value);
+        $today = new DateTimeImmutable('today', new DateTimeZone('Europe/Amsterdam'));
+    } catch (Throwable $ignoredDateError) {
+        return false;
+    }
+
+    return $date < $today;
+}
+
+function finrap_termijn_status_label(string $statusKey): string
+{
+    return match ($statusKey) {
+        'paid' => LOC('report.termijn.status.paid'),
+        'invoiced' => LOC('report.termijn.status.invoiced'),
+        default => LOC('report.termijn.status.not_invoiced'),
+    };
+}
+
 function finrap_format_currency(float $value): string
 {
     return '€ ' . number_format($value, 2, ',', '.');
@@ -100,6 +149,12 @@ function finrap_cost_group_value_tooltip_html(string $columnKey): string
     if ($columnKey === 'Cost_Group_Description') {
         return finrap_tooltip_formula_html([
             ['type' => 'ref', 'table' => 'ProjectenJobTaskLines', 'field' => 'Description'],
+        ]);
+    }
+
+    if ($columnKey === 'Contract_Value') {
+        return finrap_tooltip_formula_html([
+            ['type' => 'ref', 'table' => FINRAP_PROJECT_TASK_ENTITY_SET, 'field' => FINRAP_PROJECT_TASK_CONTRACT_FIELD],
         ]);
     }
 
@@ -204,7 +259,7 @@ function finrap_cost_group_columns(): array
     return [
         ['key' => 'Cost_Group_Code', 'label' => LOC('report.col.cost_group_code'), 'is_right' => false, 'tooltip' => ''],
         ['key' => 'Cost_Group_Description', 'label' => LOC('report.col.cost_group_description'), 'is_right' => false, 'tooltip' => ''],
-        ['key' => 'Budget_Revenue', 'label' => LOC('report.col.budget_revenue'), 'is_right' => true, 'tooltip' => LOC('report.tooltip.col.budget_revenue')],
+        ['key' => 'Contract_Value', 'label' => LOC('report.contract_value'), 'is_right' => true, 'tooltip' => LOC('report.tooltip.col.contract_value')],
         ['key' => 'Budget_Cost', 'label' => LOC('report.col.budget_cost'), 'is_right' => true, 'tooltip' => LOC('report.tooltip.col.budget_cost')],
         ['key' => 'EAC', 'label' => LOC('report.col.eac'), 'is_right' => true, 'tooltip' => LOC('report.tooltip.col.eac')],
         ['key' => 'Booked_Cost', 'label' => LOC('report.col.booked_cost'), 'is_right' => true, 'tooltip' => LOC('report.tooltip.col.booked_cost')],
@@ -213,22 +268,63 @@ function finrap_cost_group_columns(): array
     ];
 }
 
-function finrap_is_all_zero_totals_row(array $row): bool
+function finrap_task_row_has_non_zero_metrics(array $row): bool
 {
-    $budgetRevenue = finance_to_float($row['Budget_Revenue'] ?? 0.0);
-    $budget = finance_to_float($row['Budget_Cost'] ?? 0.0);
-    $eac = finance_to_float($row['EAC'] ?? 0.0);
-    $booked = finance_to_float($row['Booked_Cost'] ?? 0.0);
-    $obligations = finance_to_float($row['Entered_Obligations'] ?? 0.0);
-    $variance = finance_to_float($row['Variance_Budget_EAC'] ?? 0.0);
-
     $epsilon = 0.000001;
-    return abs($budgetRevenue) < $epsilon
-        && abs($budget) < $epsilon
-        && abs($eac) < $epsilon
-        && abs($booked) < $epsilon
-        && abs($obligations) < $epsilon
-        && abs($variance) < $epsilon;
+    $metricFields = [
+        'Contract_Value',
+        'Budget_Revenue',
+        'Budget_Cost',
+        'EAC',
+        'Booked_Cost',
+        'Entered_Obligations',
+        'Variance_Budget_EAC',
+    ];
+
+    foreach ($metricFields as $fieldName) {
+        if (abs(finance_to_float($row[$fieldName] ?? 0.0)) >= $epsilon) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function finrap_is_all_zero_totals_row(array $row, array $allTaskRows = []): bool
+{
+    if (finrap_task_row_has_change_order($row)) {
+        return false;
+    }
+
+    if (finrap_task_row_has_non_zero_metrics($row)) {
+        return false;
+    }
+
+    if (!(bool) ($row['Is_Total_Row'] ?? false) || $allTaskRows === []) {
+        return true;
+    }
+
+    $range = finrap_parse_totaling_range((string) ($row['Totaling'] ?? ''));
+    if ($range === null) {
+        return true;
+    }
+
+    foreach ($allTaskRows as $candidateRow) {
+        if (!is_array($candidateRow) || (bool) ($candidateRow['Is_Total_Row'] ?? false)) {
+            continue;
+        }
+
+        $candidateCode = (string) ($candidateRow['Cost_Group_Code'] ?? '');
+        if (!finrap_task_no_in_range($candidateCode, $range)) {
+            continue;
+        }
+
+        if (finrap_task_row_has_change_order($candidateRow) || finrap_task_row_has_non_zero_metrics($candidateRow)) {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 function finrap_render_cost_group_table(array $taskRows, bool $totalsOnly = false, bool $hideAllZeroTotals = false, bool $editableEac = false, string $tableId = ''): void
@@ -259,7 +355,7 @@ function finrap_render_cost_group_table(array $taskRows, bool $totalsOnly = fals
 
         $taskCode = (string) ($row['Cost_Group_Code'] ?? '');
         $shouldTrackZeroHide = $hideAllZeroTotals && ($totalsOnly ? $isTotalRow : true);
-        $hideAsAllZeroRow = $shouldTrackZeroHide && finrap_is_all_zero_totals_row($row);
+        $hideAsAllZeroRow = $shouldTrackZeroHide && finrap_is_all_zero_totals_row($row, $taskRows);
         $descriptionValue = (string) ($row['Cost_Group_Description'] ?? '');
         if (preg_match('/^\d{3}-000-000$/', $taskCode) === 1 && $isTotalRow) {
             $descriptionValue = (string) ($row['Cost_Group_Description'] ?? '');
@@ -286,8 +382,9 @@ function finrap_render_cost_group_table(array $taskRows, bool $totalsOnly = fals
         }
 
         $zeroHideAttr = $shouldTrackZeroHide ? ' data-hide-if-all-zero="1"' : '';
+        $changeOrderAttr = finrap_task_row_has_change_order($row) ? ' data-has-change-order="1"' : '';
 
-        echo '<tr' . ($rowClass !== '' ? ' class="' . htmlspecialchars($rowClass) . '"' : '') . ' data-task-code="' . htmlspecialchars($taskCode) . '" data-is-total-row="' . ($isTotalRow ? '1' : '0') . '"' . $zeroHideAttr . '>';
+        echo '<tr' . ($rowClass !== '' ? ' class="' . htmlspecialchars($rowClass) . '"' : '') . ' data-task-code="' . htmlspecialchars($taskCode) . '" data-is-total-row="' . ($isTotalRow ? '1' : '0') . '"' . $zeroHideAttr . $changeOrderAttr . '>';
         foreach ($columns as $column) {
             $columnKey = (string) ($column['key'] ?? '');
             $isRight = (bool) ($column['is_right'] ?? false);
@@ -334,7 +431,7 @@ function finrap_render_cost_group_table(array $taskRows, bool $totalsOnly = fals
 
             $cellClass = trim('is-right ' . finrap_currency_sign_class($value));
             $display = htmlspecialchars(finrap_format_currency($value));
-            $metricAttr = in_array($columnKey, ['Budget_Revenue', 'Budget_Cost', 'EAC', 'Booked_Cost', 'Entered_Obligations', 'Variance_Budget_EAC'], true)
+            $metricAttr = in_array($columnKey, ['Contract_Value', 'Budget_Cost', 'EAC', 'Booked_Cost', 'Entered_Obligations', 'Variance_Budget_EAC'], true)
                 ? ' data-metric-key="' . htmlspecialchars($columnKey) . '"'
                 : '';
             echo '<td class="' . htmlspecialchars($cellClass) . '"' . $metricAttr . '>' . finrap_render_value_with_tooltip_html($display, $tooltipHtml) . '</td>';
@@ -366,6 +463,8 @@ function finrap_task_rows_for_client(array $taskRows): array
             'code' => (string) ($taskRow['Cost_Group_Code'] ?? ''),
             'is_total_row' => (bool) ($taskRow['Is_Total_Row'] ?? false),
             'totaling' => (string) ($taskRow['Totaling'] ?? ''),
+            'change_order_no' => trim((string) ($taskRow['Job_Change_Order_No'] ?? '')),
+            'contract_value' => finance_to_float($taskRow['Contract_Value'] ?? 0.0),
             'budget_revenue' => finance_to_float($taskRow['Budget_Revenue'] ?? 0.0),
             'budget_cost' => finance_to_float($taskRow['Budget_Cost'] ?? 0.0),
             'eac' => finance_to_float($taskRow['EAC'] ?? 0.0),
@@ -471,6 +570,7 @@ $taskRows = is_array($modal['task_rows'] ?? null) ? $modal['task_rows'] : [];
 
 $reportOverrides = $reportId !== '' ? finrap_load_report_overrides($company, $projectNo, $reportId) : [];
 $eacOverrides = is_array($reportOverrides['eac_by_task'] ?? null) ? $reportOverrides['eac_by_task'] : [];
+$taskRows = finrap_normalize_loaded_task_row_fields($taskRows);
 $taskRows = finrap_apply_eac_overrides_to_task_rows($taskRows, $eacOverrides);
 
 $reportProjectNo = (string) ($report['project_no'] ?? $projectNo);
@@ -658,11 +758,23 @@ $tooltipTermijnDocumentNo = finrap_tooltip_formula_html([
 $tooltipTermijnDescription = finrap_tooltip_formula_html([
     ['type' => 'ref', 'table' => 'FactureerbareProjectPlanningsRegels', 'field' => 'Description'],
 ]);
-$tooltipTermijnDate = finrap_tooltip_formula_html([
+$tooltipTermijnPlanningDate = finrap_tooltip_formula_html([
     ['type' => 'ref', 'table' => 'FactureerbareProjectPlanningsRegels', 'field' => 'Planning_Date'],
 ]);
 $tooltipTermijnStatus = finrap_tooltip_formula_html([
-    ['type' => 'ref', 'table' => 'FactureerbareProjectPlanningsRegels', 'field' => 'LVS_Document_Status'],
+    ['type' => 'text', 'text' => LOC('report.tooltip.termijn.status')],
+]);
+$tooltipTermijnLedgerDescription = finrap_tooltip_formula_html([
+    ['type' => 'ref', 'table' => 'Customer_Ledger_Entries', 'field' => 'Description'],
+]);
+$tooltipTermijnPostingDate = finrap_tooltip_formula_html([
+    ['type' => 'ref', 'table' => 'Customer_Ledger_Entries', 'field' => 'Posting_Date'],
+]);
+$tooltipTermijnDueDate = finrap_tooltip_formula_html([
+    ['type' => 'ref', 'table' => 'Customer_Ledger_Entries', 'field' => 'Due_Date'],
+]);
+$tooltipTermijnClosedDate = finrap_tooltip_formula_html([
+    ['type' => 'ref', 'table' => 'Customer_Ledger_Entries', 'field' => 'Closed_at_Date'],
 ]);
 $tooltipTermijnAmount = finrap_tooltip_formula_html([
     ['type' => 'ref', 'table' => 'FactureerbareProjectPlanningsRegels', 'field' => 'Line_Amount_LCY'],
@@ -1516,68 +1628,99 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
         }
 
         .termijn-item {
-            display: grid;
-            grid-template-columns: 7.5rem minmax(0, 1fr) auto;
-            grid-template-rows: auto auto;
-            gap: 2px 10px;
-            align-items: baseline;
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
             font-size: 11px;
-            padding: 5px 10px;
+            padding: 6px 10px;
             border-top: 1px solid #f0f4fa;
-            line-height: 1.4;
+            line-height: 1.35;
         }
 
         .termijn-item:first-child {
             border-top: 0;
         }
 
-        .termijn-document {
-            grid-row: 1;
-            grid-column: 1;
-            font-weight: 700;
-            color: var(--kvt-perkins-blue);
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
+        .termijn-head {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+            align-items: center;
+            gap: 8px;
+            min-width: 0;
         }
 
-        .termijn-description {
-            grid-row: 1;
-            grid-column: 2;
-            color: #475569;
+        .termijn-document {
+            grid-column: 1;
+            justify-self: start;
+            font-weight: 700;
+            color: var(--kvt-perkins-blue);
             min-width: 0;
             word-break: break-word;
         }
 
         .termijn-status {
-            grid-row: 1;
-            grid-column: 3;
+            grid-column: 2;
+            justify-self: center;
+            text-align: center;
             font-weight: 700;
-            white-space: nowrap;
             color: #1f2937;
-            text-align: right;
+            white-space: nowrap;
         }
 
         .termijn-amount {
-            grid-row: 2;
-            grid-column: 1;
+            grid-column: 3;
+            justify-self: end;
             font-weight: 700;
             color: #1f2937;
             white-space: nowrap;
         }
 
-        .termijn-date {
-            grid-row: 2;
-            grid-column: 2;
-            color: #1f2937;
+        .termijn-status--paid {
+            color: #0a4e22;
+        }
+
+        .termijn-status--invoiced {
+            color: #1e3a8a;
+        }
+
+        .termijn-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            gap: 10px;
+            min-width: 0;
+        }
+
+        .termijn-meta-dates {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px 12px;
+            font-size: 10px;
+            color: #475569;
+            flex: 1 1 auto;
+            min-width: 70%;
+        }
+
+        .termijn-meta-date {
             white-space: nowrap;
         }
 
+        .termijn-meta-date.is-overdue {
+            color: #b91c1c;
+            font-weight: 700;
+        }
+
+        .termijn-ledger-description {
+            font-size: 10px;
+            color: #64748b;
+            word-break: break-word;
+            text-align: right;
+            flex: 0 1 45%;
+            min-width: 0;
+        }
+
         .termijn-item--wide-document .termijn-document {
-            grid-column: 1 / 3;
             white-space: normal;
-            overflow: visible;
-            text-overflow: unset;
         }
 
         .termijn-empty {
@@ -1949,32 +2092,70 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                                         <?php foreach ($termijnLines as $termijnLine): ?>
                                             <?php
                                             $termijnDocumentNo = trim((string) ($termijnLine['document_no'] ?? ''));
-                                            $termijnDescription = trim((string) ($termijnLine['description'] ?? ''));
-                                            $termijnUsesDescriptionFallback = $termijnDocumentNo === '' && $termijnDescription !== '';
+                                            $termijnPlanningDescription = trim((string) ($termijnLine['description'] ?? ''));
+                                            $termijnUsesDescriptionFallback = $termijnDocumentNo === '' && $termijnPlanningDescription !== '';
                                             $termijnDocumentLabel = $termijnDocumentNo !== ''
                                                 ? $termijnDocumentNo
-                                                : ($termijnDescription !== '' ? $termijnDescription : '-');
+                                                : ($termijnPlanningDescription !== '' ? $termijnPlanningDescription : '-');
                                             $termijnDocumentTooltip = $termijnDocumentNo !== ''
                                                 ? $tooltipTermijnDocumentNo
                                                 : $tooltipTermijnDescription;
-                                            $termijnDescriptionDisplay = $termijnDocumentNo !== '' && $termijnDescription !== ''
-                                                ? $termijnDescription
-                                                : '-';
                                             $termijnAmount = (float) ($termijnLine['amount'] ?? 0.0);
-                                            $termijnDate = finrap_format_date_nl((string) ($termijnLine['planning_date'] ?? ''));
-                                            $termijnStatus = trim((string) ($termijnLine['status'] ?? ''));
-                                            $termijnStatus = $termijnStatus !== '' ? $termijnStatus : (
-                                                (float) ($termijnLine['invoiced_amount'] ?? 0.0) > 0.000001 ? LOC('report.termijn.status.invoiced') : LOC('report.termijn.status.open')
-                                            );
+                                            $termijnStatusKey = trim((string) ($termijnLine['status'] ?? 'not_invoiced'));
+                                            if (!in_array($termijnStatusKey, ['not_invoiced', 'invoiced', 'paid'], true)) {
+                                                $termijnStatusKey = 'not_invoiced';
+                                            }
+                                            $termijnStatusLabel = finrap_termijn_status_label($termijnStatusKey);
+                                            $termijnStatusClass = $termijnStatusKey === 'paid'
+                                                ? 'termijn-status--paid'
+                                                : ($termijnStatusKey === 'invoiced' ? 'termijn-status--invoiced' : '');
+                                            $termijnLedgerDescription = trim((string) ($termijnLine['ledger_description'] ?? ''));
+                                            $hasLedgerMatch = $termijnStatusKey !== 'not_invoiced';
+                                            $termijnPlanningDateRaw = trim((string) ($termijnLine['planning_date'] ?? ''));
+                                            $termijnPlanningDate = finrap_format_date_display($termijnPlanningDateRaw);
+                                            $showPlannedDate = !$hasLedgerMatch && $termijnPlanningDate !== '';
+                                            $termijnPostingDate = finrap_format_date_display((string) ($termijnLine['posting_date'] ?? ''));
+                                            $termijnDueDateRaw = trim((string) ($termijnLine['due_date'] ?? ''));
+                                            $termijnDueDate = finrap_format_date_display($termijnDueDateRaw);
+                                            $termijnDueDateOverdue = $termijnStatusKey !== 'paid' && finrap_is_date_past($termijnDueDateRaw);
+                                            $termijnClosedDate = finrap_format_date_display((string) ($termijnLine['closed_at_date'] ?? ''));
+                                            $hasMetaDates = $termijnPostingDate !== ''
+                                                || $termijnDueDate !== ''
+                                                || $termijnClosedDate !== ''
+                                                || $showPlannedDate;
+                                            $hasFooter = $hasMetaDates || $termijnLedgerDescription !== '';
                                             ?>
                                             <li class="termijn-item<?= $termijnUsesDescriptionFallback ? ' termijn-item--wide-document' : '' ?>">
-                                                <span class="termijn-document"><?= finrap_render_value_with_tooltip_html(htmlspecialchars($termijnDocumentLabel), $termijnDocumentTooltip) ?></span>
-                                                <?php if (!$termijnUsesDescriptionFallback): ?>
-                                                <span class="termijn-description"><?= finrap_render_value_with_tooltip_html(htmlspecialchars($termijnDescriptionDisplay), $tooltipTermijnDescription) ?></span>
+                                                <div class="termijn-head">
+                                                    <span class="termijn-document"><?= finrap_render_value_with_tooltip_html(htmlspecialchars($termijnDocumentLabel), $termijnDocumentTooltip) ?></span>
+                                                    <span class="termijn-status <?= htmlspecialchars($termijnStatusClass, ENT_QUOTES) ?>"><?= finrap_render_value_with_tooltip_html(htmlspecialchars($termijnStatusLabel), $tooltipTermijnStatus) ?></span>
+                                                    <span class="termijn-amount"><?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($termijnAmount)), $tooltipTermijnAmount) ?></span>
+                                                </div>
+                                                <?php if ($hasFooter): ?>
+                                                <div class="termijn-footer">
+                                                    <?php if ($hasMetaDates): ?>
+                                                    <div class="termijn-meta-dates">
+                                                        <?php if ($showPlannedDate): ?>
+                                                        <span class="termijn-meta-date"><?= finrap_render_value_with_tooltip_html(htmlspecialchars(LOC('report.termijn.date.planned') . ': ' . $termijnPlanningDate), $tooltipTermijnPlanningDate) ?></span>
+                                                        <?php endif; ?>
+                                                        <?php if ($termijnPostingDate !== ''): ?>
+                                                        <span class="termijn-meta-date"><?= finrap_render_value_with_tooltip_html(htmlspecialchars(LOC('report.termijn.date.posting') . ': ' . $termijnPostingDate), $tooltipTermijnPostingDate) ?></span>
+                                                        <?php endif; ?>
+                                                        <?php if ($termijnDueDate !== ''): ?>
+                                                        <span class="termijn-meta-date<?= $termijnDueDateOverdue ? ' is-overdue' : '' ?>"><?= finrap_render_value_with_tooltip_html(htmlspecialchars(LOC('report.termijn.date.due') . ': ' . $termijnDueDate), $tooltipTermijnDueDate) ?></span>
+                                                        <?php endif; ?>
+                                                        <?php if ($termijnClosedDate !== ''): ?>
+                                                        <span class="termijn-meta-date"><?= finrap_render_value_with_tooltip_html(htmlspecialchars(LOC('report.termijn.date.paid') . ': ' . $termijnClosedDate), $tooltipTermijnClosedDate) ?></span>
+                                                        <?php endif; ?>
+                                                    </div>
+                                                    <?php else: ?>
+                                                    <div class="termijn-meta-dates"></div>
+                                                    <?php endif; ?>
+                                                    <?php if ($termijnLedgerDescription !== ''): ?>
+                                                    <span class="termijn-ledger-description"><?= finrap_render_value_with_tooltip_html(htmlspecialchars($termijnLedgerDescription), $tooltipTermijnLedgerDescription) ?></span>
+                                                    <?php endif; ?>
+                                                </div>
                                                 <?php endif; ?>
-                                                <span class="termijn-status"><?= finrap_render_value_with_tooltip_html(htmlspecialchars($termijnStatus), $tooltipTermijnStatus) ?></span>
-                                                <span class="termijn-amount"><?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($termijnAmount)), $tooltipTermijnAmount) ?></span>
-                                                <span class="termijn-date"><?= finrap_render_value_with_tooltip_html(htmlspecialchars($termijnDate), $tooltipTermijnDate) ?></span>
                                             </li>
                                         <?php endforeach; ?>
                                     </ul>
@@ -2143,7 +2324,7 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
 
                 function aggregateDetailRows (rows)
                 {
-                    let budgetRevenueTotal = 0;
+                    let contractValueTotal = 0;
                     let budgetTotal = 0;
                     let eacTotal = 0;
                     let bookedTotal = 0;
@@ -2157,7 +2338,7 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                             return;
                         }
 
-                        budgetRevenueTotal += Number(row.budget_revenue || 0);
+                        contractValueTotal += Number(row.contract_value || 0);
                         budgetTotal += Number(row.budget_cost || 0);
                         eacTotal += Number(row.eac || 0);
                         bookedTotal += Number(row.booked_cost || 0);
@@ -2166,7 +2347,7 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                     });
 
                     return {
-                        budget_revenue: budgetRevenueTotal,
+                        contract_value: contractValueTotal,
                         budget_cost: budgetTotal,
                         eac: eacTotal,
                         booked_cost: bookedTotal,
@@ -2214,7 +2395,8 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                             return;
                         }
 
-                        let budgetRevenueTotal = 0;
+                        const directContractValue = Number(row.contract_value || 0);
+                        let contractValueTotal = 0;
                         let budgetTotal = 0;
                         let eacTotal = 0;
                         let bookedTotal = 0;
@@ -2228,7 +2410,7 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                                 return;
                             }
 
-                            budgetRevenueTotal += Number(detailRow.budget_revenue || 0);
+                            contractValueTotal += Number(detailRow.contract_value || 0);
                             budgetTotal += Number(detailRow.budget_cost || 0);
                             eacTotal += Number(detailRow.eac || 0);
                             bookedTotal += Number(detailRow.booked_cost || 0);
@@ -2236,7 +2418,9 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                             invoicedTotal += Number(detailRow.invoiced_amount || 0);
                         });
 
-                        row.budget_revenue = budgetRevenueTotal;
+                        row.contract_value = Math.abs(contractValueTotal) >= 0.000001
+                            ? contractValueTotal
+                            : directContractValue;
                         row.budget_cost = budgetTotal;
                         row.eac = eacTotal;
                         row.booked_cost = bookedTotal;
@@ -2257,10 +2441,16 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                     return aggregateDetailRows(rows);
                 }
 
-                function isAllZeroTotalsRow (row)
+                function rowHasChangeOrder (row)
+                {
+                    return String(row.change_order_no || '').trim() !== '';
+                }
+
+                function rowHasNonZeroMetrics (row)
                 {
                     const epsilon = 0.000001;
                     const values = [
+                        Number(row.contract_value || 0),
                         Number(row.budget_revenue || 0),
                         Number(row.budget_cost || 0),
                         Number(row.eac || 0),
@@ -2269,9 +2459,40 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                         Number(row.variance_budget_eac || 0)
                     ];
 
-                    return values.every(function (value)
+                    return values.some(function (value)
                     {
-                        return Math.abs(value) < epsilon;
+                        return Math.abs(value) >= epsilon;
+                    });
+                }
+
+                function isAllZeroTotalsRow (row, allRows)
+                {
+                    if (rowHasChangeOrder(row))
+                    {
+                        return false;
+                    }
+
+                    if (rowHasNonZeroMetrics(row))
+                    {
+                        return false;
+                    }
+
+                    if (!row.is_total_row || !Array.isArray(allRows))
+                    {
+                        return true;
+                    }
+
+                    const range = parseTotalingRange(row.totaling);
+                    if (!range)
+                    {
+                        return true;
+                    }
+
+                    return !allRows.some(function (detailRow)
+                    {
+                        return !detailRow.is_total_row
+                            && taskInRange(detailRow.code, range)
+                            && (rowHasChangeOrder(detailRow) || rowHasNonZeroMetrics(detailRow));
                     });
                 }
 
@@ -2290,6 +2511,12 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
 
                     table.querySelectorAll('tr[data-hide-if-all-zero="1"]').forEach(function (tableRow)
                     {
+                        if (tableRow.dataset.hasChangeOrder === '1')
+                        {
+                            tableRow.classList.remove('is-zero-total-hidden');
+                            return;
+                        }
+
                         const taskCode = String(tableRow.dataset.taskCode || '');
                         const calculatedRow = rowByCode[taskCode];
                         if (!calculatedRow)
@@ -2297,7 +2524,7 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                             return;
                         }
 
-                        if (isAllZeroTotalsRow(calculatedRow))
+                        if (isAllZeroTotalsRow(calculatedRow, rows))
                         {
                             tableRow.classList.add('is-zero-total-hidden');
                         }
@@ -2434,7 +2661,7 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
 
                     rows.forEach(function (row)
                     {
-                        updateTableCell(row.code, 'Budget_Revenue', row.budget_revenue);
+                        updateTableCell(row.code, 'Contract_Value', row.contract_value);
                         updateTableCell(row.code, 'Budget_Cost', row.budget_cost);
                         updateTableCell(row.code, 'EAC', row.eac);
                         updateTableCell(row.code, 'Booked_Cost', row.booked_cost);
