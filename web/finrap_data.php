@@ -1460,6 +1460,31 @@ function finrap_enrich_termijn_lines_with_customer_ledger(array $termijnLines, a
     return $termijnLines;
 }
 
+function finrap_sort_termijn_lines_by_change_order(array $termijnLines): array
+{
+    usort($termijnLines, static function (array $left, array $right): int {
+        $changeOrderLeft = trim((string) ($left['change_order_no'] ?? ''));
+        $changeOrderRight = trim((string) ($right['change_order_no'] ?? ''));
+
+        $groupLeft = $changeOrderLeft === '' ? 0 : 1;
+        $groupRight = $changeOrderRight === '' ? 0 : 1;
+        if ($groupLeft !== $groupRight) {
+            return $groupLeft <=> $groupRight;
+        }
+
+        if ($groupLeft === 1) {
+            $changeOrderCompare = strnatcasecmp($changeOrderLeft, $changeOrderRight);
+            if ($changeOrderCompare !== 0) {
+                return $changeOrderCompare;
+            }
+        }
+
+        return ((int) ($left['line_no'] ?? 0)) <=> ((int) ($right['line_no'] ?? 0));
+    });
+
+    return $termijnLines;
+}
+
 function finrap_build_installments_received_history(string $company, string $projectNo, ?array $index = null): array
 {
     if ($index === null) {
@@ -2902,7 +2927,7 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
 
     try {
         $contractUrl = finrap_company_entity_url_with_query($baseUrl, $environment, $company, 'FactureerbareProjectPlanningsRegels', [
-            '$select' => 'Job_No,Line_No,Line_Type,Job_Task_No,Description,Document_No,Line_Amount_LCY,Qty_Invoiced,Planning_Date,Invoiced_Amount_LCY,LVS_Document_Status',
+            '$select' => 'Job_No,Line_No,Line_Type,Job_Task_No,Description,Document_No,Line_Amount_LCY,Qty_Invoiced,Planning_Date,Invoiced_Amount_LCY,LVS_Document_Status,' . FINRAP_PROJECT_TASK_CHANGE_ORDER_FIELD,
             '$filter' => $projectFilter,
         ]);
         $contractRows = odata_get_all($contractUrl, $auth, $ttl);
@@ -2927,13 +2952,14 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
             'line_no' => (int) ($contractRow['Line_No'] ?? 0),
             'document_no' => trim((string) ($contractRow['Document_No'] ?? '')),
             'description' => trim((string) ($contractRow['Description'] ?? '')),
+            'change_order_no' => trim((string) ($contractRow[FINRAP_PROJECT_TASK_CHANGE_ORDER_FIELD] ?? '')),
             'amount' => finance_to_float($contractRow['Line_Amount_LCY'] ?? 0.0),
             'planning_date' => (string) ($contractRow['Planning_Date'] ?? ''),
             'invoiced_amount' => finance_to_float($contractRow['Invoiced_Amount_LCY'] ?? 0.0),
         ];
     }
 
-    usort($termijnLines, static fn(array $a, array $b): int => $a['line_no'] <=> $b['line_no']);
+    $termijnLines = finrap_sort_termijn_lines_by_change_order($termijnLines);
 
     try {
         $customerUrl = finrap_company_entity_url_with_query($baseUrl, $environment, $company, 'Customer_Ledger_Entries', [

@@ -781,6 +781,7 @@ $tooltipTermijnAmount = finrap_tooltip_formula_html([
 ]);
 
 $termijnLines = is_array($modal['termijn_lines'] ?? null) ? $modal['termijn_lines'] : [];
+$termijnLines = finrap_sort_termijn_lines_by_change_order($termijnLines);
 $finrapClientTaskRows = finrap_task_rows_for_client($taskRows);
 $finrapClientEacOverrides = $eacOverrides;
 $finrapReportId = $reportId;
@@ -1547,12 +1548,11 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
 
             /* Termijn list */
             .termijn-list {
-                display: block !important;
+                display: grid !important;
             }
 
             .termijn-item {
-                display: grid !important;
-                page-break-inside: avoid;
+                display: contents !important;
             }
         }
 
@@ -1624,34 +1624,33 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
         .termijn-list {
             list-style: none;
             margin: 0;
-            padding: 0;
-        }
-
-        .termijn-item {
-            display: flex;
-            flex-direction: column;
-            gap: 3px;
-            font-size: 11px;
             padding: 6px 10px;
-            border-top: 1px solid #f0f4fa;
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+            column-gap: 8px;
+            row-gap: 3px;
+            align-items: baseline;
+            font-size: 11px;
             line-height: 1.35;
         }
 
-        .termijn-item:first-child {
-            border-top: 0;
+        .termijn-item {
+            display: contents;
         }
 
-        .termijn-head {
-            display: grid;
-            grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-            align-items: center;
-            gap: 8px;
-            min-width: 0;
+        .termijn-separator {
+            grid-column: 1 / -1;
+            border-top: 1px solid #f0f4fa;
+            margin-top: 3px;
+            padding-top: 3px;
+        }
+
+        .termijn-item:first-child .termijn-separator {
+            display: none;
         }
 
         .termijn-document {
             grid-column: 1;
-            justify-self: start;
             font-weight: 700;
             color: var(--kvt-perkins-blue);
             min-width: 0;
@@ -1660,11 +1659,10 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
 
         .termijn-status {
             grid-column: 2;
-            justify-self: center;
-            text-align: center;
             font-weight: 700;
             color: #1f2937;
             white-space: nowrap;
+            text-align: left;
         }
 
         .termijn-amount {
@@ -1684,11 +1682,13 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
         }
 
         .termijn-footer {
+            grid-column: 1 / -1;
             display: flex;
             justify-content: space-between;
             align-items: flex-end;
             gap: 10px;
             min-width: 0;
+            padding-bottom: 3px;
         }
 
         .termijn-meta-dates {
@@ -2126,11 +2126,10 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                                             $hasFooter = $hasMetaDates || $termijnLedgerDescription !== '';
                                             ?>
                                             <li class="termijn-item<?= $termijnUsesDescriptionFallback ? ' termijn-item--wide-document' : '' ?>">
-                                                <div class="termijn-head">
-                                                    <span class="termijn-document"><?= finrap_render_value_with_tooltip_html(htmlspecialchars($termijnDocumentLabel), $termijnDocumentTooltip) ?></span>
-                                                    <span class="termijn-status <?= htmlspecialchars($termijnStatusClass, ENT_QUOTES) ?>"><?= finrap_render_value_with_tooltip_html(htmlspecialchars($termijnStatusLabel), $tooltipTermijnStatus) ?></span>
-                                                    <span class="termijn-amount"><?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($termijnAmount)), $tooltipTermijnAmount) ?></span>
-                                                </div>
+                                                <div class="termijn-separator" aria-hidden="true"></div>
+                                                <span class="termijn-document"><?= finrap_render_value_with_tooltip_html(htmlspecialchars($termijnDocumentLabel), $termijnDocumentTooltip) ?></span>
+                                                <span class="termijn-status <?= htmlspecialchars($termijnStatusClass, ENT_QUOTES) ?>"><?= finrap_render_value_with_tooltip_html(htmlspecialchars($termijnStatusLabel), $tooltipTermijnStatus) ?></span>
+                                                <span class="termijn-amount"><?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($termijnAmount)), $tooltipTermijnAmount) ?></span>
                                                 <?php if ($hasFooter): ?>
                                                 <div class="termijn-footer">
                                                     <?php if ($hasMetaDates): ?>
