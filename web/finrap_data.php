@@ -2979,7 +2979,7 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
             continue;
         }
 
-        $receivedAmount = finance_to_float($customerRow['Amount_LCY'] ?? 0.0)
+        $receivedAmount = finance_to_float($customerRow['Sales_LCY'] ?? 0.0)
             - finance_to_float($customerRow['Remaining_Amt_LCY'] ?? 0.0);
         $modal['installments_received'] = finance_add_amount(
             (float) ($modal['installments_received'] ?? 0.0),
