@@ -1009,6 +1009,55 @@ function finrap_report_comment_counts(string $company, string $projectNo, array 
     return $counts;
 }
 
+function finrap_latest_report_comments_for_ids(string $company, string $projectNo, array $reportIds): array
+{
+    $reportIds = array_values(array_unique(array_filter(array_map(
+        static fn($reportId): string => trim((string) $reportId),
+        $reportIds
+    ))));
+    if ($reportIds === []) {
+        return [];
+    }
+
+    $pdo = finrap_project_comments_pdo($company, $projectNo);
+    if ($pdo === null) {
+        return [];
+    }
+
+    $placeholders = implode(',', array_fill(0, count($reportIds), '?'));
+    $stmt = $pdo->prepare(
+        'SELECT c.id, c.report_id, c.email, c.text, c.created_at, c.updated_at
+         FROM report_comments c
+         INNER JOIN (
+             SELECT report_id, MAX(id) AS max_id
+             FROM report_comments
+             WHERE report_id IN (' . $placeholders . ')
+             GROUP BY report_id
+         ) latest ON c.id = latest.max_id'
+    );
+    $stmt->execute($reportIds);
+    $rows = $stmt->fetchAll();
+    if (!is_array($rows)) {
+        return [];
+    }
+
+    $latestByReportId = [];
+    foreach ($rows as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+
+        $reportId = trim((string) ($row['report_id'] ?? ''));
+        if ($reportId === '') {
+            continue;
+        }
+
+        $latestByReportId[$reportId] = finrap_normalize_report_comment_row($row);
+    }
+
+    return $latestByReportId;
+}
+
 function finrap_count_report_comments(string $company, string $projectNo, string $reportId): int
 {
     $counts = finrap_report_comment_counts($company, $projectNo, [trim($reportId)]);
@@ -1340,9 +1389,13 @@ function finrap_report_list_page(
         $reports
     )));
     $commentCounts = finrap_report_comment_counts($company, $projectNo, $reportIds);
-    $reports = array_map(static function (array $row) use ($commentCounts): array {
+    $latestComments = finrap_latest_report_comments_for_ids($company, $projectNo, $reportIds);
+    $reports = array_map(static function (array $row) use ($commentCounts, $latestComments): array {
         $reportId = trim((string) ($row['report_id'] ?? ''));
         $row['comment_count'] = $reportId !== '' ? (int) ($commentCounts[$reportId] ?? 0) : 0;
+        $row['latest_comment'] = $reportId !== '' && isset($latestComments[$reportId])
+            ? $latestComments[$reportId]
+            : null;
 
         return $row;
     }, $reports);

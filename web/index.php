@@ -735,7 +735,7 @@ $indexI18nKeys = [
 		}
 
 		.wrap {
-			max-width: 980px;
+			max-width: 1380px;
 			margin: 0 auto;
 			padding: 18px;
 		}
@@ -743,7 +743,7 @@ $indexI18nKeys = [
 		.workspace-grid {
 			display: grid;
 			gap: 14px;
-			grid-template-columns: 1fr;
+			grid-template-columns: 0.6fr;
 		}
 
 		.hero {
@@ -843,6 +843,7 @@ $indexI18nKeys = [
 			list-style: none;
 			display: grid;
 			gap: 8px;
+			min-width: 0;
 		}
 
 		.report-item {
@@ -850,6 +851,7 @@ $indexI18nKeys = [
 			align-items: center;
 			justify-content: space-between;
 			gap: 8px;
+			min-width: 0;
 			padding: 8px 10px;
 			border: 1px solid #e2e8f0;
 			border-radius: 10px;
@@ -900,10 +902,66 @@ $indexI18nKeys = [
 		}
 
 		.report-item-meta {
-			flex: 1;
+			flex: 0 0 auto;
 			min-width: 0;
 			font-size: 13px;
 			color: var(--muted);
+			white-space: nowrap;
+		}
+
+		.report-item-comment-slot {
+			flex: 1 1 0%;
+			min-width: 0;
+			max-width: 100%;
+			padding-top: 7px;
+			overflow: visible;
+		}
+
+		.report-item-comment-preview {
+			position: relative;
+			width: 100%;
+			max-width: 100%;
+			min-width: 0;
+			height: 40px;
+			box-sizing: border-box;
+			border: 1px solid #e2e8f0;
+			border-radius: 6px;
+			padding: 0 10px;
+			display: flex;
+			align-items: center;
+			overflow: visible;
+			cursor: pointer;
+		}
+
+		.report-item-comment-preview-email {
+			position: absolute;
+			top: 0;
+			left: 8px;
+			z-index: 1;
+			transform: translateY(-50%);
+			display: inline-block;
+			max-width: calc(100% - 16px);
+			padding: 0 5px;
+			border-radius: 999px;
+			font-size: 9px;
+			font-weight: 600;
+			line-height: 1.25;
+			white-space: nowrap;
+			overflow: hidden;
+			text-overflow: ellipsis;
+			box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.65);
+		}
+
+		.report-item-comment-preview-text {
+			flex: 1 1 0%;
+			min-width: 0;
+			width: 0;
+			font-size: 10px;
+			line-height: 1.2;
+			color: #334155;
+			white-space: nowrap;
+			overflow: hidden;
+			text-overflow: ellipsis;
 		}
 
 		.report-comment-btn {
@@ -913,9 +971,9 @@ $indexI18nKeys = [
 			max-width: none;
 			min-height: 0;
 			height: auto;
-			border: 1px solid #d7e4f2;
-			background: #fff;
-			color: #334155;
+			border: 1px solid var(--brand-dark);
+			background: var(--brand-dark);
+			color: #fff;
 			border-radius: 5px;
 			padding: 1px 5px;
 			font-size: 11px;
@@ -927,8 +985,8 @@ $indexI18nKeys = [
 		}
 
 		.report-comment-btn:hover {
-			background: #f8fbff;
-			border-color: #94a3b8;
+			background: var(--brand);
+			border-color: var(--brand);
 		}
 
 		.report-comments-overlay {
@@ -1253,7 +1311,7 @@ $indexI18nKeys = [
 		.grid {
 			display: grid;
 			gap: 12px;
-			grid-template-columns: 1fr;
+			grid-template-columns: 0.7fr;
 		}
 
 		label {
@@ -1478,7 +1536,7 @@ $indexI18nKeys = [
 		.row-actions {
 			display: grid;
 			gap: 10px;
-			grid-template-columns: 1fr;
+			grid-template-columns: 0.7fr;
 			margin-top: 12px;
 		}
 
@@ -1667,7 +1725,7 @@ $indexI18nKeys = [
 
 		@media (min-width: 820px) {
 			.workspace-grid {
-				grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr);
+				grid-template-columns: minmax(0, 2fr) minmax(260px, 0.7fr);
 				align-items: start;
 			}
 
@@ -2481,7 +2539,7 @@ $indexI18nKeys = [
 				return i18n['index.js.comments_btn'].replace('%s', String(Number(count || 0)));
 			}
 
-			function updateReportCommentBadge (reportId, count)
+			function updateReportCommentBadge (reportId, count, latestComment)
 			{
 				if (!activeReportListEl || reportId === '')
 				{
@@ -2494,15 +2552,85 @@ $indexI18nKeys = [
 					button.textContent = reportCommentButtonLabel(count);
 				}
 
+				let fetchedAt = '';
 				currentReports = currentReports.map(function (entry)
 				{
 					if (String(entry.report_id || '') === reportId)
 					{
-						return Object.assign({}, entry, { comment_count: Number(count || 0) });
+						fetchedAt = String(entry.fetched_at || '');
+						const nextEntry = Object.assign({}, entry, { comment_count: Number(count || 0) });
+						if (latestComment !== undefined)
+						{
+							nextEntry.latest_comment = latestComment;
+						}
+
+						return nextEntry;
 					}
 
 					return entry;
 				});
+
+				if (latestComment !== undefined)
+				{
+					updateReportListCommentPreview(reportId, latestComment, fetchedAt);
+				}
+			}
+
+			function buildReportCommentPreviewElement (latestComment, reportId, fetchedAt)
+			{
+				const preview = document.createElement('div');
+				preview.className = 'report-item-comment-preview';
+				preview.dataset.reportId = reportId;
+				const colors = commentColorFromEmail(latestComment.email || '');
+				preview.style.borderColor = colors.border;
+				preview.style.backgroundColor = colors.cardBackground;
+
+				const emailEl = document.createElement('div');
+				emailEl.className = 'report-item-comment-preview-email';
+				emailEl.textContent = String(latestComment.email || '');
+				emailEl.style.backgroundColor = colors.chipBackground;
+				emailEl.style.color = colors.chipTextColor;
+
+				const textEl = document.createElement('div');
+				textEl.className = 'report-item-comment-preview-text';
+				textEl.textContent = String(latestComment.text || '');
+
+				preview.title = String(latestComment.text || '');
+				preview.addEventListener('click', function ()
+				{
+					openReportCommentsModal(reportId, fetchedAt || '');
+				});
+
+				preview.appendChild(emailEl);
+				preview.appendChild(textEl);
+
+				return preview;
+			}
+
+			function updateReportListCommentPreview (reportId, latestComment, fetchedAt)
+			{
+				if (!activeReportListEl || reportId === '')
+				{
+					return;
+				}
+
+				const item = activeReportListEl.querySelector('.report-item[data-report-id="' + reportId + '"]');
+				if (!item)
+				{
+					return;
+				}
+
+				const slot = item.querySelector('.report-item-comment-slot');
+				if (!slot)
+				{
+					return;
+				}
+
+				slot.innerHTML = '';
+				if (latestComment && String(latestComment.text || '').trim() !== '')
+				{
+					slot.appendChild(buildReportCommentPreviewElement(latestComment, reportId, fetchedAt));
+				}
 			}
 
 			function scrollCommentsLogToBottom ()
@@ -2835,6 +2963,20 @@ $indexI18nKeys = [
 						return String(entry.id || '') === String(updated.id || '') ? updated : entry;
 					});
 					renderCommentsLog();
+
+					const latestMessage = activeCommentsMessages[activeCommentsMessages.length - 1];
+					if (latestMessage && String(latestMessage.id || '') === String(updated.id || ''))
+					{
+						const reportEntry = currentReports.find(function (entry)
+						{
+							return String(entry.report_id || '') === activeCommentsReportId;
+						});
+						updateReportCommentBadge(
+							activeCommentsReportId,
+							reportEntry ? Number(reportEntry.comment_count || 0) : activeCommentsMessages.length,
+							updated
+						);
+					}
 				}).catch(function (error)
 				{
 					commentsSending = false;
@@ -2875,7 +3017,7 @@ $indexI18nKeys = [
 					{
 						activeCommentsMessages = activeCommentsMessages.concat([json.message]);
 					}
-					updateReportCommentBadge(activeCommentsReportId, json.comment_count);
+					updateReportCommentBadge(activeCommentsReportId, json.comment_count, json.message || null);
 					renderCommentsLog();
 					reportCommentsInput.focus();
 				}).catch(function (error)
@@ -2919,6 +3061,11 @@ $indexI18nKeys = [
 
 					const item = document.createElement('li');
 					item.className = 'report-item ' + (entry.auto_report === true ? 'is-auto-report' : 'is-manual-report');
+					item.dataset.reportId = reportId;
+
+					const meta = document.createElement('div');
+					meta.className = 'report-item-meta';
+					meta.textContent = formatReportTimestamp(entry.fetched_at || '');
 
 					const commentBtn = document.createElement('button');
 					commentBtn.type = 'button';
@@ -2931,9 +3078,16 @@ $indexI18nKeys = [
 						openReportCommentsModal(reportId, entry.fetched_at || '');
 					});
 
-					const meta = document.createElement('div');
-					meta.className = 'report-item-meta';
-					meta.textContent = formatReportTimestamp(entry.fetched_at || '');
+					const commentSlot = document.createElement('div');
+					commentSlot.className = 'report-item-comment-slot';
+					if (entry.latest_comment && String(entry.latest_comment.text || '').trim() !== '')
+					{
+						commentSlot.appendChild(buildReportCommentPreviewElement(
+							entry.latest_comment,
+							reportId,
+							entry.fetched_at || ''
+						));
+					}
 
 					const actions = document.createElement('div');
 					actions.className = 'report-item-actions';
@@ -2983,8 +3137,9 @@ $indexI18nKeys = [
 
 					actions.appendChild(openBtn);
 					actions.appendChild(deleteBtn);
-					item.appendChild(commentBtn);
 					item.appendChild(meta);
+					item.appendChild(commentBtn);
+					item.appendChild(commentSlot);
 					item.appendChild(actions);
 					container.appendChild(item);
 				});
