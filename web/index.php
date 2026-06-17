@@ -426,6 +426,90 @@ if (($_GET['action'] ?? '') === 'list_reports') {
 	]);
 }
 
+if (($_GET['action'] ?? '') === 'list_report_comments') {
+	$company = trim((string) ($_POST['company'] ?? ''));
+	$projectNo = trim((string) ($_POST['project_no'] ?? ''));
+	$reportId = trim((string) ($_POST['report_id'] ?? ''));
+
+	if ($company === '' || !in_array($company, $companies, true) || $projectNo === '' || $reportId === '') {
+		index_json_response(['ok' => false, 'error' => LOC('error.invalid_input')], 400);
+	}
+
+	$reportPath = finrap_report_cache_path($company, $projectNo, $reportId);
+	if (!is_file($reportPath)) {
+		index_json_response(['ok' => false, 'error' => LOC('error.report_not_found')], 404);
+	}
+
+	$messages = finrap_load_report_comments($company, $projectNo, $reportId);
+	index_json_response([
+		'ok' => true,
+		'messages' => $messages,
+		'comment_count' => count($messages),
+	]);
+}
+
+if (($_GET['action'] ?? '') === 'add_report_comment') {
+	$company = trim((string) ($_POST['company'] ?? ''));
+	$projectNo = trim((string) ($_POST['project_no'] ?? ''));
+	$reportId = trim((string) ($_POST['report_id'] ?? ''));
+	$text = trim((string) ($_POST['text'] ?? ''));
+
+	if ($company === '' || !in_array($company, $companies, true) || $projectNo === '' || $reportId === '') {
+		index_json_response(['ok' => false, 'error' => LOC('error.invalid_input')], 400);
+	}
+
+	$userEmail = index_get_user_email();
+	if ($userEmail === '') {
+		index_json_response(['ok' => false, 'error' => LOC('error.comment_auth_required')], 403);
+	}
+
+	if ($text === '') {
+		index_json_response(['ok' => false, 'error' => LOC('error.comment_empty')], 400);
+	}
+
+	$message = finrap_add_report_comment($company, $projectNo, $reportId, $userEmail, $text);
+	if ($message === null) {
+		index_json_response(['ok' => false, 'error' => LOC('error.comment_save_failed')], 500);
+	}
+
+	index_json_response([
+		'ok' => true,
+		'message' => $message,
+		'comment_count' => finrap_count_report_comments($company, $projectNo, $reportId),
+	]);
+}
+
+if (($_GET['action'] ?? '') === 'update_report_comment') {
+	$company = trim((string) ($_POST['company'] ?? ''));
+	$projectNo = trim((string) ($_POST['project_no'] ?? ''));
+	$reportId = trim((string) ($_POST['report_id'] ?? ''));
+	$commentId = (int) ($_POST['comment_id'] ?? 0);
+	$text = trim((string) ($_POST['text'] ?? ''));
+
+	if ($company === '' || !in_array($company, $companies, true) || $projectNo === '' || $reportId === '' || $commentId <= 0) {
+		index_json_response(['ok' => false, 'error' => LOC('error.invalid_input')], 400);
+	}
+
+	$userEmail = index_get_user_email();
+	if ($userEmail === '') {
+		index_json_response(['ok' => false, 'error' => LOC('error.comment_auth_required')], 403);
+	}
+
+	if ($text === '') {
+		index_json_response(['ok' => false, 'error' => LOC('error.comment_empty')], 400);
+	}
+
+	$message = finrap_update_report_comment($company, $projectNo, $reportId, $commentId, $userEmail, $text);
+	if ($message === null) {
+		index_json_response(['ok' => false, 'error' => LOC('error.comment_update_failed')], 500);
+	}
+
+	index_json_response([
+		'ok' => true,
+		'message' => $message,
+	]);
+}
+
 if (($_GET['action'] ?? '') === 'generate_report') {
 	$company = trim((string) ($_POST['company'] ?? ''));
 	$projectNo = trim((string) ($_POST['project_no'] ?? ''));
@@ -558,6 +642,19 @@ $indexI18nKeys = [
 	'index.js.reports_load_more',
 	'index.js.reports_loading_more',
 	'index.js.btn.open',
+	'index.js.comments_btn',
+	'index.js.comments_modal_title',
+	'index.js.comments_loading',
+	'index.js.comments_empty',
+	'index.js.comments_send',
+	'index.js.comments_save',
+	'index.js.comments_cancel',
+	'index.js.comments_edit',
+	'index.js.comments_edited',
+	'index.js.comments_placeholder',
+	'index.js.comments_load_failed',
+	'index.js.comments_send_failed',
+	'index.js.comments_update_failed',
 	'index.js.dashboard_btn',
 	'index.js.dashboard_modal_title',
 	'index.js.dashboard_loading',
@@ -803,8 +900,225 @@ $indexI18nKeys = [
 		}
 
 		.report-item-meta {
+			flex: 1;
+			min-width: 0;
 			font-size: 13px;
 			color: var(--muted);
+		}
+
+		.report-comment-btn {
+			flex: 0 0 auto;
+			width: fit-content;
+			min-width: 0;
+			max-width: none;
+			min-height: 0;
+			height: auto;
+			border: 1px solid #d7e4f2;
+			background: #fff;
+			color: #334155;
+			border-radius: 5px;
+			padding: 1px 5px;
+			font-size: 11px;
+			font-weight: 600;
+			line-height: 1.15;
+			cursor: pointer;
+			white-space: nowrap;
+			font-variant-numeric: tabular-nums;
+		}
+
+		.report-comment-btn:hover {
+			background: #f8fbff;
+			border-color: #94a3b8;
+		}
+
+		.report-comments-overlay {
+			position: fixed;
+			inset: 0;
+			z-index: 1200;
+			display: none;
+			align-items: center;
+			justify-content: center;
+			padding: 16px;
+			background: rgba(15, 23, 42, 0.45);
+		}
+
+		.report-comments-overlay.is-visible {
+			display: flex;
+		}
+
+		.report-comments-dialog {
+			width: min(560px, 100%);
+			max-height: min(80vh, 720px);
+			display: flex;
+			flex-direction: column;
+			background: #fff;
+			border-radius: 14px;
+			box-shadow: 0 20px 50px rgba(15, 23, 42, 0.25);
+			overflow: hidden;
+		}
+
+		.report-comments-head {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			gap: 12px;
+			padding: 14px 16px;
+			border-bottom: 1px solid #e2e8f0;
+		}
+
+		.report-comments-title {
+			margin: 0;
+			font-size: 16px;
+			font-weight: 600;
+		}
+
+		.report-comments-log {
+			flex: 1;
+			min-height: 220px;
+			max-height: 52vh;
+			overflow-y: auto;
+			padding: 14px 16px;
+			display: flex;
+			flex-direction: column;
+			gap: 6px;
+			background: #f8fafc;
+		}
+
+		.report-comments-empty {
+			margin: auto 0;
+			text-align: center;
+			color: var(--muted);
+			font-size: 14px;
+		}
+
+		.report-comment-message {
+			position: relative;
+			border: 1px solid #e2e8f0;
+			border-radius: 8px;
+			padding: 6px 8px;
+			background: #fff;
+		}
+
+		.report-comment-message.is-own {
+			background: #e8f4ff;
+			border-color: #bfdbfe;
+			padding-right: 28px;
+		}
+
+		.report-comment-message-meta {
+			display: flex;
+			flex-wrap: wrap;
+			align-items: baseline;
+			gap: 4px 8px;
+			margin-bottom: 3px;
+			font-size: 11px;
+			line-height: 1.2;
+			color: var(--muted);
+		}
+
+		.report-comment-message-edited {
+			font-style: italic;
+		}
+
+		.report-comment-message-edit-btn {
+			position: absolute;
+			top: 4px;
+			right: 4px;
+			width: 20px;
+			height: 20px;
+			min-height: 0;
+			padding: 0;
+			border: none;
+			border-radius: 4px;
+			background: transparent;
+			color: #64748b;
+			font-size: 12px;
+			line-height: 1;
+			cursor: pointer;
+			opacity: 0;
+			display: inline-flex;
+			align-items: center;
+			justify-content: center;
+			transition: opacity .12s ease, background .12s ease;
+		}
+
+		.report-comment-message:hover .report-comment-message-edit-btn,
+		.report-comment-message:focus-within .report-comment-message-edit-btn {
+			opacity: 1;
+		}
+
+		.report-comment-message-edit-btn:hover {
+			background: rgba(148, 163, 184, 0.18);
+		}
+
+		.report-comment-message-edit textarea {
+			width: 100%;
+			min-height: 56px;
+			resize: vertical;
+			margin-bottom: 6px;
+			padding: 6px 8px;
+			font-size: 13px;
+			line-height: 1.35;
+		}
+
+		.report-comment-message-edit-actions {
+			display: flex;
+			gap: 6px;
+			justify-content: flex-end;
+		}
+
+		.report-comment-message-edit-actions .btn {
+			min-height: 0;
+			width: auto;
+			padding: 4px 10px;
+			font-size: 12px;
+		}
+
+		.report-comment-message-email {
+			font-weight: 600;
+			color: #334155;
+			font-size: 11px;
+		}
+
+		.report-comment-message-text {
+			font-size: 13px;
+			line-height: 1.35;
+			white-space: pre-wrap;
+			word-break: break-word;
+		}
+
+		.report-comments-compose {
+			display: flex;
+			gap: 8px;
+			align-items: flex-end;
+			padding: 12px 16px 16px;
+			border-top: 1px solid #e2e8f0;
+			background: #fff;
+		}
+
+		.report-comments-input {
+			flex: 1 1 auto;
+			min-width: 0;
+			width: auto;
+			min-height: 42px;
+			max-height: 120px;
+			resize: vertical;
+			margin: 0;
+		}
+
+		.report-comments-send {
+			flex: 0 0 auto;
+			min-width: 0;
+			min-height: 0;
+			height: 34px;
+			width: 34px;
+			padding: 0;
+			display: inline-flex;
+			align-items: center;
+			justify-content: center;
+			font-size: 16px;
+			line-height: 1;
+			border-radius: 8px;
 		}
 
 		.report-item-actions {
@@ -1550,6 +1864,26 @@ $indexI18nKeys = [
 		</div>
 	</div>
 
+	<div id="reportCommentsOverlay" class="report-comments-overlay" role="dialog" aria-modal="true"
+		aria-labelledby="reportCommentsTitle">
+		<div class="report-comments-dialog">
+			<div class="report-comments-head">
+				<h2 id="reportCommentsTitle" class="report-comments-title"><?= htmlspecialchars(LOC('index.js.comments_modal_title'), ENT_QUOTES) ?></h2>
+				<button id="reportCommentsClose" class="btn btn-print" type="button"><?= htmlspecialchars(LOC('index.modal.close'), ENT_QUOTES) ?></button>
+			</div>
+			<div id="reportCommentsLog" class="report-comments-log">
+				<div id="reportCommentsEmpty" class="report-comments-empty"><?= htmlspecialchars(LOC('index.js.comments_empty'), ENT_QUOTES) ?></div>
+			</div>
+			<div class="report-comments-compose">
+				<textarea id="reportCommentsInput" class="report-comments-input" rows="2"
+					placeholder="<?= htmlspecialchars(LOC('index.js.comments_placeholder'), ENT_QUOTES) ?>"></textarea>
+				<button id="reportCommentsSend" class="btn btn-main report-comments-send" type="button"
+					aria-label="<?= htmlspecialchars(LOC('index.js.comments_send'), ENT_QUOTES) ?>"
+					title="<?= htmlspecialchars(LOC('index.js.comments_send'), ENT_QUOTES) ?>">⤴️</button>
+			</div>
+		</div>
+	</div>
+
 	<script>
 		(function ()
 		{
@@ -1559,6 +1893,7 @@ $indexI18nKeys = [
 			const initialShowAutoReports = <?= $showAutoReports ? 'true' : 'false' ?>;
 			const REPORT_LIST_PAGE_SIZE = <?= (int) FINRAP_REPORT_LIST_PAGE_SIZE ?>;
 			const currentUserHandle = <?= json_encode(finrap_email_local_part(index_get_user_email()), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
+			const currentUserEmail = <?= json_encode(strtolower(trim(index_get_user_email())), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
 			const companySelect = document.getElementById('companySelect');
 			const projectInput = document.getElementById('projectInput');
 			const findBtn = document.getElementById('findBtn');
@@ -1584,6 +1919,13 @@ $indexI18nKeys = [
 			const confirmDeleteStep3 = document.getElementById('confirmDeleteStep3');
 			const confirmDeleteStep3No = document.getElementById('confirmDeleteStep3No');
 			const confirmDeleteStep3Yes = document.getElementById('confirmDeleteStep3Yes');
+			const reportCommentsOverlay = document.getElementById('reportCommentsOverlay');
+			const reportCommentsTitle = document.getElementById('reportCommentsTitle');
+			const reportCommentsLog = document.getElementById('reportCommentsLog');
+			const reportCommentsEmpty = document.getElementById('reportCommentsEmpty');
+			const reportCommentsInput = document.getElementById('reportCommentsInput');
+			const reportCommentsSend = document.getElementById('reportCommentsSend');
+			const reportCommentsClose = document.getElementById('reportCommentsClose');
 			const dashboardModalOverlay = document.getElementById('dashboardModalOverlay');
 			const dashboardModalClose = document.getElementById('dashboardModalClose');
 			const dashboardModalTitle = document.getElementById('dashboardModalTitle');
@@ -1620,6 +1962,11 @@ $indexI18nKeys = [
 			let reportListLoadMoreBtn = null;
 			let reportListLoadingMore = false;
 			let showAutoReports = initialShowAutoReports === true;
+			let activeCommentsReportId = '';
+			let activeCommentsMessages = [];
+			let commentsLoading = false;
+			let commentsSending = false;
+			let editingCommentId = '';
 			let dashboardPocChartInstance = null;
 			let dashboardBookedChartInstance = null;
 			let dashboardEacChartInstance = null;
@@ -2123,6 +2470,374 @@ $indexI18nKeys = [
 				});
 			}
 
+			function formatCommentTimestamp (value)
+			{
+				return formatReportTimestamp(value);
+			}
+
+			function reportCommentButtonLabel (count)
+			{
+				return i18n['index.js.comments_btn'].replace('%s', String(Number(count || 0)));
+			}
+
+			function updateReportCommentBadge (reportId, count)
+			{
+				if (!activeReportListEl || reportId === '')
+				{
+					return;
+				}
+
+				const button = activeReportListEl.querySelector('.report-comment-btn[data-report-id="' + reportId + '"]');
+				if (button)
+				{
+					button.textContent = reportCommentButtonLabel(count);
+				}
+
+				currentReports = currentReports.map(function (entry)
+				{
+					if (String(entry.report_id || '') === reportId)
+					{
+						return Object.assign({}, entry, { comment_count: Number(count || 0) });
+					}
+
+					return entry;
+				});
+			}
+
+			function scrollCommentsLogToBottom ()
+			{
+				if (!reportCommentsLog)
+				{
+					return;
+				}
+
+				reportCommentsLog.scrollTop = reportCommentsLog.scrollHeight;
+			}
+
+			function isOwnComment (message)
+			{
+				return currentUserEmail !== ''
+					&& String((message && message.email) || '').toLowerCase() === currentUserEmail;
+			}
+
+			function renderCommentMessageElement (message)
+			{
+				const wrapper = document.createElement('div');
+				wrapper.className = 'report-comment-message' + (isOwnComment(message) ? ' is-own' : '');
+				wrapper.dataset.commentId = String(message.id || '');
+
+				const meta = document.createElement('div');
+				meta.className = 'report-comment-message-meta';
+
+				const emailEl = document.createElement('span');
+				emailEl.className = 'report-comment-message-email';
+				emailEl.textContent = String(message.email || '');
+
+				const timeEl = document.createElement('span');
+				const timestamp = message.is_edited ? (message.updated_at || message.created_at) : (message.created_at || '');
+				timeEl.textContent = formatCommentTimestamp(timestamp);
+				if (message.is_edited)
+				{
+					const editedEl = document.createElement('span');
+					editedEl.className = 'report-comment-message-edited';
+					editedEl.textContent = '(' + i18n['index.js.comments_edited'] + ')';
+					meta.appendChild(emailEl);
+					meta.appendChild(timeEl);
+					meta.appendChild(editedEl);
+				}
+				else
+				{
+					meta.appendChild(emailEl);
+					meta.appendChild(timeEl);
+				}
+
+				if (isOwnComment(message))
+				{
+					const editBtn = document.createElement('button');
+					editBtn.type = 'button';
+					editBtn.className = 'report-comment-message-edit-btn';
+					editBtn.textContent = '✏️';
+					editBtn.setAttribute('aria-label', i18n['index.js.comments_edit']);
+					editBtn.title = i18n['index.js.comments_edit'];
+					editBtn.addEventListener('click', function ()
+					{
+						startEditComment(message);
+					});
+					wrapper.appendChild(editBtn);
+				}
+
+				const textEl = document.createElement('div');
+				textEl.className = 'report-comment-message-text';
+				textEl.textContent = String(message.text || '');
+
+				wrapper.appendChild(meta);
+				wrapper.appendChild(textEl);
+
+				return wrapper;
+			}
+
+			function renderCommentsLog ()
+			{
+				if (!reportCommentsLog)
+				{
+					return;
+				}
+
+				reportCommentsLog.innerHTML = '';
+				if (!Array.isArray(activeCommentsMessages) || activeCommentsMessages.length === 0)
+				{
+					if (reportCommentsEmpty)
+					{
+						const empty = document.createElement('div');
+						empty.className = 'report-comments-empty';
+						empty.textContent = commentsLoading
+							? i18n['index.js.comments_loading']
+							: i18n['index.js.comments_empty'];
+						reportCommentsLog.appendChild(empty);
+					}
+					return;
+				}
+
+				activeCommentsMessages.forEach(function (message)
+				{
+					reportCommentsLog.appendChild(renderCommentMessageElement(message));
+				});
+				scrollCommentsLogToBottom();
+			}
+
+			function closeReportCommentsModal ()
+			{
+				activeCommentsReportId = '';
+				activeCommentsMessages = [];
+				editingCommentId = '';
+				commentsLoading = false;
+				commentsSending = false;
+				if (reportCommentsOverlay)
+				{
+					reportCommentsOverlay.classList.remove('is-visible');
+				}
+				if (reportCommentsInput)
+				{
+					reportCommentsInput.value = '';
+				}
+				document.body.style.overflow = '';
+			}
+
+			function openReportCommentsModal (reportId, fetchedAt)
+			{
+				if (reportId === '' || activeProjectNo === '')
+				{
+					return;
+				}
+
+				activeCommentsReportId = reportId;
+				activeCommentsMessages = [];
+				editingCommentId = '';
+				commentsLoading = true;
+				if (reportCommentsTitle)
+				{
+					const title = i18n['index.js.comments_modal_title'];
+					const when = formatReportTimestamp(fetchedAt || '');
+					reportCommentsTitle.textContent = when !== '' ? title + ' — ' + when : title;
+				}
+				if (reportCommentsOverlay)
+				{
+					reportCommentsOverlay.classList.add('is-visible');
+				}
+				document.body.style.overflow = 'hidden';
+				renderCommentsLog();
+
+				postForm('index.php?action=list_report_comments', {
+					company: companySelect.value,
+					project_no: activeProjectNo,
+					report_id: reportId
+				}).then(function (json)
+				{
+					commentsLoading = false;
+					if (!json.ok || activeCommentsReportId !== reportId)
+					{
+						if (activeCommentsReportId === reportId)
+						{
+							setStatus(json.error || i18n['index.js.comments_load_failed'], true);
+							closeReportCommentsModal();
+						}
+						return;
+					}
+
+					activeCommentsMessages = Array.isArray(json.messages) ? json.messages : [];
+					updateReportCommentBadge(reportId, json.comment_count);
+					renderCommentsLog();
+					if (reportCommentsInput)
+					{
+						reportCommentsInput.focus();
+					}
+				}).catch(function (error)
+				{
+					commentsLoading = false;
+					if (activeCommentsReportId === reportId)
+					{
+						setStatus(i18n['index.js.network_error'].replace('%s', error.message), true);
+						closeReportCommentsModal();
+					}
+				});
+			}
+
+			function startEditComment (message)
+			{
+				if (!reportCommentsLog || !message)
+				{
+					return;
+				}
+
+				editingCommentId = String(message.id || '');
+				const existing = reportCommentsLog.querySelector('[data-comment-id="' + editingCommentId + '"]');
+				if (!existing)
+				{
+					return;
+				}
+
+				existing.innerHTML = '';
+				existing.classList.add('is-own');
+
+				const editWrap = document.createElement('div');
+				editWrap.className = 'report-comment-message-edit';
+
+				const textarea = document.createElement('textarea');
+				textarea.value = String(message.text || '');
+
+				const actions = document.createElement('div');
+				actions.className = 'report-comment-message-edit-actions';
+
+				const cancelBtn = document.createElement('button');
+				cancelBtn.type = 'button';
+				cancelBtn.className = 'btn btn-print';
+				cancelBtn.textContent = i18n['index.js.comments_cancel'];
+				cancelBtn.addEventListener('click', function ()
+				{
+					editingCommentId = '';
+					renderCommentsLog();
+				});
+
+				const saveBtn = document.createElement('button');
+				saveBtn.type = 'button';
+				saveBtn.className = 'btn btn-main';
+				saveBtn.textContent = i18n['index.js.comments_save'];
+				saveBtn.addEventListener('click', function ()
+				{
+					saveEditedComment(message, textarea.value);
+				});
+
+				textarea.addEventListener('keydown', function (event)
+				{
+					if (event.key === 'Enter' && !event.shiftKey)
+					{
+						event.preventDefault();
+						saveEditedComment(message, textarea.value);
+					}
+					if (event.key === 'Escape')
+					{
+						event.preventDefault();
+						editingCommentId = '';
+						renderCommentsLog();
+					}
+				});
+
+				actions.appendChild(cancelBtn);
+				actions.appendChild(saveBtn);
+				editWrap.appendChild(textarea);
+				editWrap.appendChild(actions);
+				existing.appendChild(editWrap);
+				textarea.focus();
+				textarea.select();
+			}
+
+			function saveEditedComment (message, rawText)
+			{
+				if (commentsSending || !message || activeCommentsReportId === '')
+				{
+					return;
+				}
+
+				const text = String(rawText || '').trim();
+				if (text === '')
+				{
+					setStatus(i18n['index.js.comments_send_failed'], true);
+					return;
+				}
+
+				commentsSending = true;
+				postForm('index.php?action=update_report_comment', {
+					company: companySelect.value,
+					project_no: activeProjectNo,
+					report_id: activeCommentsReportId,
+					comment_id: String(message.id || ''),
+					text: text
+				}).then(function (json)
+				{
+					commentsSending = false;
+					if (!json.ok)
+					{
+						setStatus(json.error || i18n['index.js.comments_update_failed'], true);
+						return;
+					}
+
+					editingCommentId = '';
+					const updated = json.message;
+					activeCommentsMessages = activeCommentsMessages.map(function (entry)
+					{
+						return String(entry.id || '') === String(updated.id || '') ? updated : entry;
+					});
+					renderCommentsLog();
+				}).catch(function (error)
+				{
+					commentsSending = false;
+					setStatus(i18n['index.js.network_error'].replace('%s', error.message), true);
+				});
+			}
+
+			function sendReportComment ()
+			{
+				if (commentsSending || commentsLoading || activeCommentsReportId === '' || !reportCommentsInput)
+				{
+					return;
+				}
+
+				const text = reportCommentsInput.value.trim();
+				if (text === '')
+				{
+					return;
+				}
+
+				commentsSending = true;
+				postForm('index.php?action=add_report_comment', {
+					company: companySelect.value,
+					project_no: activeProjectNo,
+					report_id: activeCommentsReportId,
+					text: text
+				}).then(function (json)
+				{
+					commentsSending = false;
+					if (!json.ok)
+					{
+						setStatus(json.error || i18n['index.js.comments_send_failed'], true);
+						return;
+					}
+
+					reportCommentsInput.value = '';
+					if (json.message)
+					{
+						activeCommentsMessages = activeCommentsMessages.concat([json.message]);
+					}
+					updateReportCommentBadge(activeCommentsReportId, json.comment_count);
+					renderCommentsLog();
+					reportCommentsInput.focus();
+				}).catch(function (error)
+				{
+					commentsSending = false;
+					setStatus(i18n['index.js.network_error'].replace('%s', error.message), true);
+				});
+			}
+
 			function renderReportList (container, reports)
 			{
 				activeReportListEl = container;
@@ -2158,9 +2873,20 @@ $indexI18nKeys = [
 					const item = document.createElement('li');
 					item.className = 'report-item ' + (entry.auto_report === true ? 'is-auto-report' : 'is-manual-report');
 
+					const commentBtn = document.createElement('button');
+					commentBtn.type = 'button';
+					commentBtn.className = 'report-comment-btn';
+					commentBtn.dataset.reportId = reportId;
+					commentBtn.textContent = reportCommentButtonLabel(entry.comment_count || 0);
+					commentBtn.title = i18n['index.js.comments_modal_title'];
+					commentBtn.addEventListener('click', function ()
+					{
+						openReportCommentsModal(reportId, entry.fetched_at || '');
+					});
+
 					const meta = document.createElement('div');
 					meta.className = 'report-item-meta';
-					meta.textContent = formatReportTimestamp(entry.fetched_at || '') + ' (' + reportId + ')';
+					meta.textContent = formatReportTimestamp(entry.fetched_at || '');
 
 					const actions = document.createElement('div');
 					actions.className = 'report-item-actions';
@@ -2210,6 +2936,7 @@ $indexI18nKeys = [
 
 					actions.appendChild(openBtn);
 					actions.appendChild(deleteBtn);
+					item.appendChild(commentBtn);
 					item.appendChild(meta);
 					item.appendChild(actions);
 					container.appendChild(item);
@@ -3482,6 +4209,39 @@ $indexI18nKeys = [
 				});
 			}
 
+			if (reportCommentsClose)
+			{
+				reportCommentsClose.addEventListener('click', closeReportCommentsModal);
+			}
+
+			if (reportCommentsSend)
+			{
+				reportCommentsSend.addEventListener('click', sendReportComment);
+			}
+
+			if (reportCommentsInput)
+			{
+				reportCommentsInput.addEventListener('keydown', function (event)
+				{
+					if (event.key === 'Enter' && !event.shiftKey)
+					{
+						event.preventDefault();
+						sendReportComment();
+					}
+				});
+			}
+
+			if (reportCommentsOverlay)
+			{
+				reportCommentsOverlay.addEventListener('click', function (event)
+				{
+					if (event.target === reportCommentsOverlay)
+					{
+						closeReportCommentsModal();
+					}
+				});
+			}
+
 			if (finrapModalClose)
 			{
 				finrapModalClose.addEventListener('click', closeFinrapModal);
@@ -3528,6 +4288,19 @@ $indexI18nKeys = [
 
 			window.addEventListener('keydown', function (event)
 			{
+				if (event.key === 'Escape' && reportCommentsOverlay && reportCommentsOverlay.classList.contains('is-visible'))
+				{
+					if (editingCommentId !== '')
+					{
+						editingCommentId = '';
+						renderCommentsLog();
+						return;
+					}
+
+					closeReportCommentsModal();
+					return;
+				}
+
 				if (event.key === 'Escape' && ((confirmDeleteStep1 && confirmDeleteStep1.classList.contains('is-visible')) || (confirmDeleteStep2 && confirmDeleteStep2.classList.contains('is-visible')) || (confirmDeleteStep3 && confirmDeleteStep3.classList.contains('is-visible'))))
 				{
 					closeDeleteModals();

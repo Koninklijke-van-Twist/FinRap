@@ -38,6 +38,7 @@ const FINRAP_BUDGET_HOURS_FILTER_UOM_VALUE = 'HR';
 const FINRAP_ESTIMATED_HOURS_ENTITY_SET = '';
 const FINRAP_ESTIMATED_HOURS_FIELD = '';
 const FINRAP_REPORT_LIST_PAGE_SIZE = 25;
+const FINRAP_REPORT_COMMENT_MAX_LENGTH = 2000;
 
 /**
  * Functies
@@ -221,7 +222,7 @@ function finrap_count_report_snapshot_files(string $company, string $projectNo):
 
     $count = 0;
     foreach ($entries as $entry) {
-        if (!str_starts_with($entry, $prefix) || !str_ends_with($entry, '.json') || str_ends_with($entry, '-overrides.json')) {
+        if (!str_starts_with($entry, $prefix) || !str_ends_with($entry, '.json') || finrap_is_report_sidecar_json_file($entry)) {
             continue;
         }
 
@@ -245,7 +246,7 @@ function finrap_rebuild_report_index(string $company, string $projectNo): bool
 
     $reports = [];
     foreach ($entries as $entry) {
-        if (!str_starts_with($entry, $prefix) || !str_ends_with($entry, '.json') || str_ends_with($entry, '-overrides.json')) {
+        if (!str_starts_with($entry, $prefix) || !str_ends_with($entry, '.json') || finrap_is_report_sidecar_json_file($entry)) {
             continue;
         }
 
@@ -614,6 +615,11 @@ function finrap_refresh_report_indexes_for_nightly_results(array $results): void
     }
 }
 
+function finrap_is_report_sidecar_json_file(string $filename): bool
+{
+    return str_ends_with($filename, '-overrides.json') || str_ends_with($filename, '-comments.json');
+}
+
 function finrap_report_overrides_path(string $company, string $projectNo, string $reportId): string
 {
     $reportPath = finrap_report_cache_path($company, $projectNo, $reportId);
@@ -766,6 +772,385 @@ function finrap_inherit_overrides_from_previous_report(string $company, string $
     return $copied;
 }
 
+function finrap_project_comments_db_path(string $company, string $projectNo): string
+{
+    $safeCompany = finrap_normalize_company($company);
+    $safeProject = preg_replace('/[^a-z0-9_-]/i', '_', finrap_normalize_project_no($projectNo));
+
+    return finrap_cache_dir() . DIRECTORY_SEPARATOR . $safeCompany . '_' . $safeProject . '_comments.sqlite';
+}
+
+function finrap_project_comments_pdo(string $company, string $projectNo): ?PDO
+{
+    if (!extension_loaded('pdo_sqlite')) {
+        return null;
+    }
+
+    $path = finrap_project_comments_db_path($company, $projectNo);
+    try {
+        $pdo = new PDO('sqlite:' . $path, null, null, [
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+        ]);
+        finrap_ensure_project_comments_schema($pdo);
+        finrap_migrate_legacy_json_report_comments($pdo, $company, $projectNo);
+
+        return $pdo;
+    } catch (Throwable) {
+        return null;
+    }
+}
+
+function finrap_ensure_project_comments_schema(PDO $pdo): void
+{
+    $pdo->exec(
+        'CREATE TABLE IF NOT EXISTS report_comments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            report_id TEXT NOT NULL,
+            email TEXT NOT NULL COLLATE NOCASE,
+            text TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )'
+    );
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_report_comments_report_id ON report_comments(report_id)');
+    $pdo->exec(
+        'CREATE TABLE IF NOT EXISTS schema_meta (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )'
+    );
+}
+
+function finrap_normalize_report_comment_row(array $row): array
+{
+    $createdAt = trim((string) ($row['created_at'] ?? ''));
+    $updatedAt = trim((string) ($row['updated_at'] ?? ''));
+
+    return [
+        'id' => (string) ($row['id'] ?? ''),
+        'email' => strtolower(trim((string) ($row['email'] ?? ''))),
+        'text' => (string) ($row['text'] ?? ''),
+        'created_at' => $createdAt,
+        'updated_at' => $updatedAt !== '' ? $updatedAt : $createdAt,
+        'is_edited' => $updatedAt !== '' && $createdAt !== '' && $updatedAt !== $createdAt,
+    ];
+}
+
+function finrap_trim_report_comment_text(string $text): string
+{
+    $text = trim($text);
+    if ($text === '') {
+        return '';
+    }
+
+    if (mb_strlen($text) > FINRAP_REPORT_COMMENT_MAX_LENGTH) {
+        return mb_substr($text, 0, FINRAP_REPORT_COMMENT_MAX_LENGTH);
+    }
+
+    return $text;
+}
+
+function finrap_migrate_legacy_json_report_comments(PDO $pdo, string $company, string $projectNo): void
+{
+    $stmt = $pdo->prepare('SELECT value FROM schema_meta WHERE key = :key LIMIT 1');
+    $stmt->execute(['key' => 'legacy_json_imported']);
+    $row = $stmt->fetch();
+    if (is_array($row) && trim((string) ($row['value'] ?? '')) === '1') {
+        return;
+    }
+
+    $dir = finrap_cache_dir();
+    $prefix = finrap_report_snapshot_file_prefix($company, $projectNo);
+    $entries = @scandir($dir);
+    if (!is_array($entries)) {
+        return;
+    }
+
+    $insert = $pdo->prepare(
+        'INSERT INTO report_comments (report_id, email, text, created_at, updated_at)
+         VALUES (:report_id, :email, :text, :created_at, :updated_at)'
+    );
+    $exists = $pdo->prepare(
+        'SELECT 1 FROM report_comments
+         WHERE report_id = :report_id
+           AND email = :email COLLATE NOCASE
+           AND created_at = :created_at
+           AND text = :text
+         LIMIT 1'
+    );
+
+    foreach ($entries as $entry) {
+        if (!is_string($entry) || !str_starts_with($entry, $prefix) || !str_ends_with($entry, '-comments.json')) {
+            continue;
+        }
+
+        $reportId = substr($entry, strlen($prefix), -strlen('-comments.json'));
+        if ($reportId === '' || !preg_match('/^[a-z0-9_-]+$/i', $reportId)) {
+            continue;
+        }
+
+        $raw = @file_get_contents($dir . DIRECTORY_SEPARATOR . $entry);
+        if (!is_string($raw) || trim($raw) === '') {
+            continue;
+        }
+
+        $decoded = json_decode($raw, true);
+        if (!is_array($decoded)) {
+            continue;
+        }
+
+        $messages = is_array($decoded['messages'] ?? null) ? $decoded['messages'] : [];
+        foreach ($messages as $message) {
+            if (!is_array($message)) {
+                continue;
+            }
+
+            $text = finrap_trim_report_comment_text((string) ($message['text'] ?? ''));
+            $email = strtolower(trim((string) ($message['email'] ?? '')));
+            $createdAt = trim((string) ($message['created_at'] ?? ''));
+            if ($text === '' || $email === '' || $createdAt === '') {
+                continue;
+            }
+
+            $exists->execute([
+                'report_id' => $reportId,
+                'email' => $email,
+                'created_at' => $createdAt,
+                'text' => $text,
+            ]);
+            if ($exists->fetch()) {
+                continue;
+            }
+
+            $insert->execute([
+                'report_id' => $reportId,
+                'email' => $email,
+                'text' => $text,
+                'created_at' => $createdAt,
+                'updated_at' => $createdAt,
+            ]);
+        }
+    }
+
+    $pdo->prepare('INSERT OR REPLACE INTO schema_meta (key, value) VALUES (:key, :value)')
+        ->execute(['key' => 'legacy_json_imported', 'value' => '1']);
+}
+
+function finrap_load_report_comments(string $company, string $projectNo, string $reportId): array
+{
+    $reportId = trim($reportId);
+    if ($reportId === '') {
+        return [];
+    }
+
+    $pdo = finrap_project_comments_pdo($company, $projectNo);
+    if ($pdo === null) {
+        return [];
+    }
+
+    $stmt = $pdo->prepare(
+        'SELECT id, email, text, created_at, updated_at
+         FROM report_comments
+         WHERE report_id = :report_id
+         ORDER BY created_at ASC, id ASC'
+    );
+    $stmt->execute(['report_id' => $reportId]);
+    $rows = $stmt->fetchAll();
+    if (!is_array($rows)) {
+        return [];
+    }
+
+    return array_map(static fn(array $row): array => finrap_normalize_report_comment_row($row), $rows);
+}
+
+function finrap_report_comment_counts(string $company, string $projectNo, array $reportIds): array
+{
+    $reportIds = array_values(array_unique(array_filter(array_map(
+        static fn($reportId): string => trim((string) $reportId),
+        $reportIds
+    ))));
+    if ($reportIds === []) {
+        return [];
+    }
+
+    $pdo = finrap_project_comments_pdo($company, $projectNo);
+    if ($pdo === null) {
+        return [];
+    }
+
+    $placeholders = implode(',', array_fill(0, count($reportIds), '?'));
+    $stmt = $pdo->prepare(
+        'SELECT report_id, COUNT(*) AS comment_count
+         FROM report_comments
+         WHERE report_id IN (' . $placeholders . ')
+         GROUP BY report_id'
+    );
+    $stmt->execute($reportIds);
+    $rows = $stmt->fetchAll();
+    if (!is_array($rows)) {
+        return [];
+    }
+
+    $counts = [];
+    foreach ($rows as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+
+        $reportId = trim((string) ($row['report_id'] ?? ''));
+        if ($reportId === '') {
+            continue;
+        }
+
+        $counts[$reportId] = (int) ($row['comment_count'] ?? 0);
+    }
+
+    return $counts;
+}
+
+function finrap_count_report_comments(string $company, string $projectNo, string $reportId): int
+{
+    $counts = finrap_report_comment_counts($company, $projectNo, [trim($reportId)]);
+
+    return (int) ($counts[trim($reportId)] ?? 0);
+}
+
+function finrap_add_report_comment(string $company, string $projectNo, string $reportId, string $email, string $text): ?array
+{
+    $reportId = trim($reportId);
+    $email = strtolower(trim($email));
+    $text = finrap_trim_report_comment_text($text);
+    if ($reportId === '' || $email === '' || $text === '') {
+        return null;
+    }
+
+    $reportPath = finrap_report_cache_path($company, $projectNo, $reportId);
+    if (!is_file($reportPath)) {
+        return null;
+    }
+
+    $pdo = finrap_project_comments_pdo($company, $projectNo);
+    if ($pdo === null) {
+        return null;
+    }
+
+    $createdAt = gmdate('c');
+    $stmt = $pdo->prepare(
+        'INSERT INTO report_comments (report_id, email, text, created_at, updated_at)
+         VALUES (:report_id, :email, :text, :created_at, :updated_at)'
+    );
+    $stmt->execute([
+        'report_id' => $reportId,
+        'email' => $email,
+        'text' => $text,
+        'created_at' => $createdAt,
+        'updated_at' => $createdAt,
+    ]);
+
+    $id = (int) $pdo->lastInsertId();
+    if ($id <= 0) {
+        return null;
+    }
+
+    return finrap_normalize_report_comment_row([
+        'id' => (string) $id,
+        'email' => $email,
+        'text' => $text,
+        'created_at' => $createdAt,
+        'updated_at' => $createdAt,
+    ]);
+}
+
+function finrap_update_report_comment(
+    string $company,
+    string $projectNo,
+    string $reportId,
+    int $commentId,
+    string $email,
+    string $text
+): ?array {
+    $reportId = trim($reportId);
+    $email = strtolower(trim($email));
+    $text = finrap_trim_report_comment_text($text);
+    if ($reportId === '' || $email === '' || $text === '' || $commentId <= 0) {
+        return null;
+    }
+
+    $reportPath = finrap_report_cache_path($company, $projectNo, $reportId);
+    if (!is_file($reportPath)) {
+        return null;
+    }
+
+    $pdo = finrap_project_comments_pdo($company, $projectNo);
+    if ($pdo === null) {
+        return null;
+    }
+
+    $existingStmt = $pdo->prepare(
+        'SELECT id, email, text, created_at, updated_at
+         FROM report_comments
+         WHERE id = :id AND report_id = :report_id
+         LIMIT 1'
+    );
+    $existingStmt->execute([
+        'id' => $commentId,
+        'report_id' => $reportId,
+    ]);
+    $existing = $existingStmt->fetch();
+    if (!is_array($existing)) {
+        return null;
+    }
+
+    if (strcasecmp((string) ($existing['email'] ?? ''), $email) !== 0) {
+        return null;
+    }
+
+    $updatedAt = gmdate('c');
+    $updateStmt = $pdo->prepare(
+        'UPDATE report_comments
+         SET text = :text, updated_at = :updated_at
+         WHERE id = :id AND report_id = :report_id AND email = :email'
+    );
+    $updateStmt->execute([
+        'text' => $text,
+        'updated_at' => $updatedAt,
+        'id' => $commentId,
+        'report_id' => $reportId,
+        'email' => $email,
+    ]);
+
+    if ($updateStmt->rowCount() < 1) {
+        return null;
+    }
+
+    return finrap_normalize_report_comment_row([
+        'id' => (string) $commentId,
+        'email' => $email,
+        'text' => $text,
+        'created_at' => (string) ($existing['created_at'] ?? ''),
+        'updated_at' => $updatedAt,
+    ]);
+}
+
+function finrap_delete_report_comments(string $company, string $projectNo, string $reportId): bool
+{
+    $reportId = trim($reportId);
+    if ($reportId === '') {
+        return true;
+    }
+
+    $pdo = finrap_project_comments_pdo($company, $projectNo);
+    if ($pdo === null) {
+        return true;
+    }
+
+    $stmt = $pdo->prepare('DELETE FROM report_comments WHERE report_id = :report_id');
+    $stmt->execute(['report_id' => $reportId]);
+
+    return true;
+}
+
 function finrap_delete_report_overrides(string $company, string $projectNo, string $reportId): bool
 {
     $path = finrap_report_overrides_path($company, $projectNo, $reportId);
@@ -867,6 +1252,7 @@ function finrap_delete_report_snapshot(string $company, string $projectNo, strin
     $deleted = @unlink($path);
     if ($deleted) {
         finrap_delete_report_overrides($company, $projectNo, $reportId);
+        finrap_delete_report_comments($company, $projectNo, $reportId);
         finrap_remove_report_index_entry($company, $projectNo, $reportId);
         finrap_refresh_dashboard_cache($company, $projectNo);
     }
@@ -949,6 +1335,17 @@ function finrap_report_list_page(
     $offset = max(0, $offset);
     $limit = max(1, $limit);
     $reports = array_slice($rows, $offset, $limit);
+    $reportIds = array_values(array_filter(array_map(
+        static fn(array $row): string => trim((string) ($row['report_id'] ?? '')),
+        $reports
+    )));
+    $commentCounts = finrap_report_comment_counts($company, $projectNo, $reportIds);
+    $reports = array_map(static function (array $row) use ($commentCounts): array {
+        $reportId = trim((string) ($row['report_id'] ?? ''));
+        $row['comment_count'] = $reportId !== '' ? (int) ($commentCounts[$reportId] ?? 0) : 0;
+
+        return $row;
+    }, $reports);
 
     return [
         'reports' => $reports,
@@ -974,7 +1371,7 @@ function finrap_list_nightly_report_targets(): array
 
     $projectsByKey = [];
     foreach ($entries as $entry) {
-        if (!is_string($entry) || !str_contains($entry, '_ts_') || !str_ends_with($entry, '.json') || str_ends_with($entry, '-overrides.json')) {
+        if (!is_string($entry) || !str_contains($entry, '_ts_') || !str_ends_with($entry, '.json') || finrap_is_report_sidecar_json_file($entry)) {
             continue;
         }
 
