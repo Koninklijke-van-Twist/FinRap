@@ -1000,8 +1000,6 @@ $indexI18nKeys = [
 		}
 
 		.report-comment-message.is-own {
-			background: #e8f4ff;
-			border-color: #bfdbfe;
 			padding-right: 28px;
 		}
 
@@ -1075,9 +1073,12 @@ $indexI18nKeys = [
 		}
 
 		.report-comment-message-email {
+			display: inline-block;
+			padding: 1px 7px;
+			border-radius: 999px;
 			font-weight: 600;
-			color: #334155;
 			font-size: 11px;
+			line-height: 1.35;
 		}
 
 		.report-comment-message-text {
@@ -2520,11 +2521,55 @@ $indexI18nKeys = [
 					&& String((message && message.email) || '').toLowerCase() === currentUserEmail;
 			}
 
+			function hashEmailForColor (value)
+			{
+				let hash = 0;
+				const text = String(value || '');
+				for (let i = 0; i < text.length; i++)
+				{
+					hash = text.charCodeAt(i) + ((hash << 5) - hash);
+				}
+
+				return hash;
+			}
+
+			function commentColorFromEmail (email)
+			{
+				const normalized = String(email || '').toLowerCase().trim();
+				if (normalized === '')
+				{
+					return {
+						border: '#cbd5e1',
+						chipBackground: '#e2e8f0',
+						cardBackground: '#ffffff',
+						chipTextColor: '#334155'
+					};
+				}
+
+				const hash = hashEmailForColor(normalized);
+				const hue = Math.abs(hash) % 360;
+				const saturation = 72 + (Math.abs(hash >> 8) % 14);
+				const lightness = 56 + (Math.abs(hash >> 16) % 10);
+				const borderLightness = Math.max(lightness - 6, 48);
+				const chipTextColor = lightness >= 58 ? '#1e293b' : '#ffffff';
+
+				return {
+					border: 'hsl(' + hue + ', ' + saturation + '%, ' + borderLightness + '%)',
+					chipBackground: 'hsl(' + hue + ', ' + saturation + '%, ' + lightness + '%)',
+					cardBackground: 'hsl(' + hue + ', ' + Math.min(saturation, 48) + '%, 96%)',
+					chipTextColor: chipTextColor
+				};
+			}
+
 			function renderCommentMessageElement (message)
 			{
 				const wrapper = document.createElement('div');
 				wrapper.className = 'report-comment-message' + (isOwnComment(message) ? ' is-own' : '');
 				wrapper.dataset.commentId = String(message.id || '');
+
+				const emailColors = commentColorFromEmail(message.email || '');
+				wrapper.style.borderColor = emailColors.border;
+				wrapper.style.backgroundColor = emailColors.cardBackground;
 
 				const meta = document.createElement('div');
 				meta.className = 'report-comment-message-meta';
@@ -2532,6 +2577,8 @@ $indexI18nKeys = [
 				const emailEl = document.createElement('span');
 				emailEl.className = 'report-comment-message-email';
 				emailEl.textContent = String(message.email || '');
+				emailEl.style.backgroundColor = emailColors.chipBackground;
+				emailEl.style.color = emailColors.chipTextColor;
 
 				const timeEl = document.createElement('span');
 				const timestamp = message.is_edited ? (message.updated_at || message.created_at) : (message.created_at || '');
