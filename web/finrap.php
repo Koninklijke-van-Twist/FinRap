@@ -1929,8 +1929,6 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                                     <th class="is-right" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.gross_profit'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.gross_profit'), ENT_QUOTES) ?>
                                     </th>
                                     <th class="is-right" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.col.booked_cost'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.col.booked_cost'), ENT_QUOTES) ?></th>
-                                    <th class="is-right" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.order_result'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.order_result'), ENT_QUOTES) ?>
-                                    </th>
                                     <th class="is-right" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.col.entered_obligations'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.col.entered_obligations'), ENT_QUOTES) ?></th>
                                     <th class="is-right" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.installments_invoiced'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.installments_invoiced'), ENT_QUOTES) ?>
                                     </th>
@@ -1954,7 +1952,6 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                                     $headerGrossProfit = finance_to_float($headerMetricRow['gross_profit'] ?? ($isProjectHeaderRow ? $grossProfit : ($headerContractValue - $headerTotalDirectCost)));
                                     $headerBookedCost = finance_to_float($headerMetricRow['booked_cost'] ?? ($isProjectHeaderRow ? $bookedCostTotal : 0.0));
                                     $headerObligations = finance_to_float($headerMetricRow['entered_obligations'] ?? ($isProjectHeaderRow ? $obligationTotal : 0.0));
-                                    $headerOrderResult = finance_to_float($headerMetricRow['order_result'] ?? ($isProjectHeaderRow ? $orderResult : 0.0));
                                     $headerInstallmentsInvoiced = finance_to_float($headerMetricRow['installments_invoiced'] ?? ($isProjectHeaderRow ? $installmentsInvoiced : 0.0));
                                     $headerInstallmentsReceived = array_key_exists('installments_received', $headerMetricRow)
                                         ? finance_to_float($headerMetricRow['installments_received'])
@@ -1978,9 +1975,6 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                                     </td>
                                     <td class="is-right <?= finrap_currency_sign_class($headerBookedCost) ?>"<?= $isProjectHeaderRow ? ' id="metricBookedCost"' : '' ?>>
                                         <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($headerBookedCost)), finrap_cost_group_value_tooltip_html('Booked_Cost')) ?>
-                                    </td>
-                                    <td class="is-right <?= finrap_currency_sign_class($headerOrderResult) ?>"<?= $isProjectHeaderRow ? ' id="metricOrderResult"' : '' ?>>
-                                        <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($headerOrderResult)), $tooltipOrderResult) ?>
                                     </td>
                                     <td class="is-right <?= finrap_currency_sign_class($headerObligations) ?>"<?= $isProjectHeaderRow ? ' id="metricObligations"' : '' ?>>
                                         <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($headerObligations)), finrap_cost_group_value_tooltip_html('Entered_Obligations')) ?>
