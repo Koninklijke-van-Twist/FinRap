@@ -3784,6 +3784,14 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
     return $modal;
 }
 
+function finrap_report_missing_task_rows(array $report): bool
+{
+    $modal = is_array($report['project_modal'] ?? null) ? $report['project_modal'] : [];
+    $taskRows = is_array($modal['task_rows'] ?? null) ? $modal['task_rows'] : [];
+
+    return $taskRows === [];
+}
+
 function finrap_generate_month_for_project(string $company, string $projectNo, string $yearMonth): array
 {
     $projectNoText = trim($projectNo);

@@ -556,6 +556,7 @@ if (($_GET['action'] ?? '') === 'generate_report') {
 			'reports_total_count' => $reportsPage['total_count'],
 			'reports_has_more' => $reportsPage['has_more'],
 			'report_url' => 'finrap.php?company=' . rawurlencode($company) . '&project_no=' . rawurlencode($resolvedProjectNo) . '&report_id=' . rawurlencode($reportId) . '&lang=' . $reportLang,
+			'missing_task_rows' => finrap_report_missing_task_rows($report),
 		]);
 	} catch (Throwable $error) {
 		index_json_response(['ok' => false, 'error' => LOC('error.generate_failed', $error->getMessage())], 500);
@@ -1244,6 +1245,11 @@ $indexI18nKeys = [
 			background: #b42318;
 		}
 
+		.confirm-topbar.is-warning {
+			background: #d97706;
+			color: #ffffff;
+		}
+
 		.confirm-topbar.is-hazard {
 			background: repeating-linear-gradient(45deg,
 					#111111 0,
@@ -1923,6 +1929,18 @@ $indexI18nKeys = [
 		</div>
 	</div>
 
+	<div id="confirmMissingTaskRows" class="confirm-overlay" role="dialog" aria-modal="true"
+		aria-labelledby="confirmMissingTaskRowsTitle">
+		<div class="confirm-dialog">
+			<div id="confirmMissingTaskRowsTitle" class="confirm-topbar is-warning"></div>
+			<div class="confirm-body"><?= htmlspecialchars(LOC('index.generate.missing_task_rows.body'), ENT_QUOTES) ?></div>
+			<div class="confirm-actions">
+				<button id="confirmMissingTaskRowsNo" class="btn btn-print" type="button"><?= htmlspecialchars(LOC('index.btn.no'), ENT_QUOTES) ?></button>
+				<button id="confirmMissingTaskRowsYes" class="btn btn-main" type="button"><?= htmlspecialchars(LOC('index.btn.yes'), ENT_QUOTES) ?></button>
+			</div>
+		</div>
+	</div>
+
 	<div id="reportCommentsOverlay" class="report-comments-overlay" role="dialog" aria-modal="true"
 		aria-labelledby="reportCommentsTitle">
 		<div class="report-comments-dialog">
@@ -1939,6 +1957,18 @@ $indexI18nKeys = [
 				<button id="reportCommentsSend" class="btn btn-main report-comments-send" type="button"
 					aria-label="<?= htmlspecialchars(LOC('index.js.comments_send'), ENT_QUOTES) ?>"
 					title="<?= htmlspecialchars(LOC('index.js.comments_send'), ENT_QUOTES) ?>">⤴️</button>
+			</div>
+		</div>
+	</div>
+
+	<div id="confirmMissingTaskRows" class="confirm-overlay" role="dialog" aria-modal="true"
+		aria-labelledby="confirmMissingTaskRowsTitle">
+		<div class="confirm-dialog">
+			<div id="confirmMissingTaskRowsTitle" class="confirm-topbar is-warning"></div>
+			<div class="confirm-body"><?= htmlspecialchars(LOC('index.generate.missing_task_rows.body'), ENT_QUOTES) ?></div>
+			<div class="confirm-actions">
+				<button id="confirmMissingTaskRowsNo" class="btn btn-print" type="button"><?= htmlspecialchars(LOC('index.btn.no'), ENT_QUOTES) ?></button>
+				<button id="confirmMissingTaskRowsYes" class="btn btn-main" type="button"><?= htmlspecialchars(LOC('index.btn.yes'), ENT_QUOTES) ?></button>
 			</div>
 		</div>
 	</div>
@@ -1978,6 +2008,9 @@ $indexI18nKeys = [
 			const confirmDeleteStep3 = document.getElementById('confirmDeleteStep3');
 			const confirmDeleteStep3No = document.getElementById('confirmDeleteStep3No');
 			const confirmDeleteStep3Yes = document.getElementById('confirmDeleteStep3Yes');
+			const confirmMissingTaskRows = document.getElementById('confirmMissingTaskRows');
+			const confirmMissingTaskRowsNo = document.getElementById('confirmMissingTaskRowsNo');
+			const confirmMissingTaskRowsYes = document.getElementById('confirmMissingTaskRowsYes');
 			const reportCommentsOverlay = document.getElementById('reportCommentsOverlay');
 			const reportCommentsTitle = document.getElementById('reportCommentsTitle');
 			const reportCommentsLog = document.getElementById('reportCommentsLog');
@@ -2013,6 +2046,8 @@ $indexI18nKeys = [
 			let recentProjects = Array.isArray(initialRecentProjects) ? initialRecentProjects : [];
 			let pendingDeleteReportId = '';
 			let pendingDeleteIsAutoReport = false;
+			let pendingGeneratedReportId = '';
+			let pendingGeneratedReportUrl = '';
 			let currentProjectData = null;
 			let currentReports = [];
 			let currentReportsTotal = 0;
@@ -2288,6 +2323,72 @@ $indexI18nKeys = [
 					hour: '2-digit',
 					minute: '2-digit',
 					second: '2-digit'
+				});
+			}
+
+			function closeMissingTaskRowsModal ()
+			{
+				pendingGeneratedReportId = '';
+				pendingGeneratedReportUrl = '';
+				if (confirmMissingTaskRows)
+				{
+					confirmMissingTaskRows.classList.remove('is-visible');
+				}
+			}
+
+			function openMissingTaskRowsModal (reportId, reportUrl)
+			{
+				pendingGeneratedReportId = String(reportId || '').trim();
+				pendingGeneratedReportUrl = String(reportUrl || '').trim();
+				if (confirmMissingTaskRows)
+				{
+					confirmMissingTaskRows.classList.add('is-visible');
+				}
+			}
+
+			function confirmMissingTaskRowsProceed ()
+			{
+				const reportUrl = pendingGeneratedReportUrl;
+				closeMissingTaskRowsModal();
+				if (reportUrl !== '')
+				{
+					openFinrapModal(reportUrl, i18n['index.js.report_modal_title'].replace('%s', activeProjectNo), false);
+				}
+			}
+
+			function cancelMissingTaskRowsReport ()
+			{
+				const reportId = String(pendingGeneratedReportId || '').trim();
+				if (reportId === '')
+				{
+					closeMissingTaskRowsModal();
+					return;
+				}
+
+				postForm('index.php?action=delete_report', {
+					company: companySelect.value,
+					project_no: activeProjectNo,
+					report_id: reportId,
+					include_auto_reports: showAutoReports ? '1' : '0'
+				}).then(function (json)
+				{
+					closeMissingTaskRowsModal();
+					if (!json.ok)
+					{
+						setStatus(json.error || i18n['index.js.status.delete_failed'], true);
+						return;
+					}
+
+					setStatus(i18n['index.js.status.deleted'], false);
+					applyReportsPayload(json);
+					if (activeReportListEl)
+					{
+						renderReportList(activeReportListEl, currentReports);
+					}
+				}).catch(function (error)
+				{
+					closeMissingTaskRowsModal();
+					setStatus(i18n['index.js.network_error'].replace('%s', error.message), true);
 				});
 			}
 
@@ -4279,7 +4380,11 @@ $indexI18nKeys = [
 						finalizeLoader(i18n['index.js.status.report_ready']);
 						setStatus(i18n['index.js.status.generated'], false);
 						renderProject(project, json);
-						if (json.report_url)
+						if (json.missing_task_rows === true && json.report_id && json.report_url)
+						{
+							openMissingTaskRowsModal(json.report_id, json.report_url);
+						}
+						else if (json.report_url)
 						{
 							openFinrapModal(json.report_url, i18n['index.js.report_modal_title'].replace('%s', activeProjectNo), false);
 						}
@@ -4353,6 +4458,16 @@ $indexI18nKeys = [
 			recentProjects = normalizeRecentProjects(recentProjects);
 			renderRecentProjects();
 			refreshCompaniesInBackground();
+
+			if (confirmMissingTaskRowsNo)
+			{
+				confirmMissingTaskRowsNo.addEventListener('click', cancelMissingTaskRowsReport);
+			}
+
+			if (confirmMissingTaskRowsYes)
+			{
+				confirmMissingTaskRowsYes.addEventListener('click', confirmMissingTaskRowsProceed);
+			}
 
 			if (confirmDeleteStep1No)
 			{
@@ -4500,6 +4615,12 @@ $indexI18nKeys = [
 					}
 
 					closeReportCommentsModal();
+					return;
+				}
+
+				if (event.key === 'Escape' && confirmMissingTaskRows && confirmMissingTaskRows.classList.contains('is-visible'))
+				{
+					cancelMissingTaskRowsReport();
 					return;
 				}
 
