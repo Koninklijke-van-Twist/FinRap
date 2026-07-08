@@ -3216,6 +3216,24 @@ function finrap_header_table_has_change_orders(array $headerMetricRows): bool
     return false;
 }
 
+function finrap_header_shows_budget_revenue_column(array $headerMetricRows): bool
+{
+    $epsilon = 0.000001;
+    foreach ($headerMetricRows as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+
+        $contractValue = finance_to_float($row['contract_value'] ?? 0.0);
+        $budgetRevenue = finance_to_float($row['budget_revenue'] ?? 0.0);
+        if (abs($contractValue - $budgetRevenue) >= $epsilon) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 function finrap_fetch_baseline_amounts_by_task(
     string $baseUrl,
     string $environment,
