@@ -664,6 +664,8 @@ $indexI18nKeys = [
 	'index.js.dashboard_chart_poc_title',
 	'index.js.dashboard_chart_poc_baseline',
 	'index.js.dashboard_chart_poc_eac',
+	'index.js.dashboard_chart_poc_baseline_hours',
+	'index.js.dashboard_chart_poc_eac_hours',
 	'index.js.dashboard_chart_y_axis',
 	'index.js.dashboard_chart_cost_title',
 	'index.js.dashboard_chart_cost_subtitle',
@@ -3616,6 +3618,24 @@ $indexI18nKeys = [
 								data: points.map(function (point) { return Number(point.poc_eac || 0); }),
 								borderColor: '#00529b',
 								backgroundColor: 'rgba(0, 82, 155, 0.08)',
+								tension: 0.2,
+								pointRadius: 3
+							},
+							{
+								label: i18n['index.js.dashboard_chart_poc_baseline_hours'],
+								data: points.map(function (point) { return Number(point.poc_baseline_hours || 0); }),
+								borderColor: '#16a34a',
+								backgroundColor: 'rgba(22, 163, 74, 0.08)',
+								borderDash: [6, 4],
+								tension: 0.2,
+								pointRadius: 3
+							},
+							{
+								label: i18n['index.js.dashboard_chart_poc_eac_hours'],
+								data: points.map(function (point) { return Number(point.poc_eac_hours || 0); }),
+								borderColor: '#7c3aed',
+								backgroundColor: 'rgba(124, 58, 237, 0.08)',
+								borderDash: [6, 4],
 								tension: 0.2,
 								pointRadius: 3
 							}
