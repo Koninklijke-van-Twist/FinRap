@@ -39,6 +39,7 @@ const FINRAP_ESTIMATED_HOURS_ENTITY_SET = '';
 const FINRAP_ESTIMATED_HOURS_FIELD = '';
 const FINRAP_REPORT_LIST_PAGE_SIZE = 25;
 const FINRAP_REPORT_COMMENT_MAX_LENGTH = 2000;
+const FINRAP_REPORT_GENERATE_ODATA_TTL = 60;
 
 /**
  * Functies
@@ -2219,26 +2220,8 @@ function finrap_company_entity_url_with_query(string $baseUrl, string $environme
 
 function finrap_odata_ttl_for_month(string $yearMonth): int
 {
-    $day = 86400;
-    $week = 604800;
-    $year = 31536000;
-
-    $target = DateTimeImmutable::createFromFormat('!Y-m', $yearMonth);
-    if (!$target instanceof DateTimeImmutable) {
-        return $day;
-    }
-
-    $currentMonth = (new DateTimeImmutable('first day of this month'))->format('Y-m');
-    if ($yearMonth === $currentMonth) {
-        return $day;
-    }
-
-    $previousMonth = (new DateTimeImmutable('first day of last month'))->format('Y-m');
-    if ($yearMonth === $previousMonth) {
-        return $week;
-    }
-
-    return $year;
+    // Report generation persists a snapshot; OData cache only needs a short TTL.
+    return FINRAP_REPORT_GENERATE_ODATA_TTL;
 }
 
 function finrap_is_formatted_task_no(string $taskNo): bool
@@ -3937,7 +3920,7 @@ function finrap_generate_month_for_project(string $company, string $projectNo, s
         throw new RuntimeException('Project niet gevonden in BC.');
     }
 
-    $environment = auth_get_environment_for_company($company, 300);
+    $environment = auth_get_environment_for_company($company, $ttl);
     $service = new ProjectFinanceService($company, $environment);
 
     $projectFinance = $service->collectProjectFinanceForProjects([$projectNoText], $ttl);
