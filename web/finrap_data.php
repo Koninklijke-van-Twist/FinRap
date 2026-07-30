@@ -3483,6 +3483,9 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
         ];
     }
 
+    $termijnLines = array_values(array_filter($termijnLines, static function (array $termijnLine): bool {
+        return abs(finance_to_float($termijnLine['amount'] ?? 0.0)) >= 0.000001;
+    }));
     $termijnLines = finrap_sort_termijn_lines_by_change_order($termijnLines);
 
     try {

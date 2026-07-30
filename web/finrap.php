@@ -292,6 +292,7 @@ function finrap_cost_group_columns(): array
         ['key' => 'Budget_Cost', 'label' => LOC('report.col.budget_cost'), 'is_right' => true, 'tooltip' => LOC('report.tooltip.col.budget_cost')],
         ['key' => 'EAC', 'label' => LOC('report.col.eac'), 'is_right' => true, 'tooltip' => LOC('report.tooltip.col.eac')],
         ['key' => 'Booked_Cost', 'label' => LOC('report.col.booked_cost'), 'is_right' => true, 'tooltip' => LOC('report.tooltip.col.booked_cost')],
+        ['key' => 'Entered_Obligations', 'label' => LOC('report.col.entered_obligations'), 'is_right' => true, 'tooltip' => LOC('report.tooltip.col.entered_obligations')],
         ['key' => 'Variance_Budget_EAC', 'label' => LOC('report.col.variance_budget_eac'), 'is_right' => true, 'tooltip' => LOC('report.tooltip.col.variance_budget_eac')],
     ];
 }
@@ -307,6 +308,7 @@ function finrap_task_row_has_non_zero_metrics(array $row): bool
         'EAC_Hours',
         'Booked_Hours',
         'Booked_Cost',
+        'Entered_Obligations',
         'Variance_Budget_EAC',
     ];
 
@@ -468,7 +470,7 @@ function finrap_render_cost_group_table(array $taskRows, bool $totalsOnly = fals
 
             $cellClass = trim('is-right ' . finrap_currency_sign_class($value));
             $display = htmlspecialchars(finrap_format_currency($value));
-            $metricAttr = in_array($columnKey, ['Budget_Cost', 'EAC', 'Booked_Cost', 'Variance_Budget_EAC'], true)
+            $metricAttr = in_array($columnKey, ['Budget_Cost', 'EAC', 'Booked_Cost', 'Entered_Obligations', 'Variance_Budget_EAC'], true)
                 ? ' data-metric-key="' . htmlspecialchars($columnKey) . '"'
                 : '';
             echo '<td class="' . htmlspecialchars($cellClass) . '"' . $metricAttr . '>' . finrap_render_value_with_tooltip_html($display, $tooltipHtml) . '</td>';
@@ -689,7 +691,7 @@ $orderResultPct = abs($contractValue) > $finrapEpsilon ? ($orderResult / $contra
 $variancePct = abs($contractValue) > $finrapEpsilon ? ($variance / $contractValue * 100.0) : 0.0;
 
 $expVariance = finance_calculate_result($budgetCostTotal, $eacTotal);
-$expOrderResult = $contractValue - (float) ($summary['expected_costs'] ?? 0.0);
+$expOrderResult = $contractValue - $budgetCostTotal;
 $iprResult = $installmentsReceived - $bookedCostTotal;
 $pocBaseline = finrap_calculate_poc_percent($bookedCostTotal, $budgetCostTotal);
 $pocEac = finrap_calculate_poc_percent($bookedCostTotal, $eacTotal);
@@ -736,9 +738,9 @@ $tooltipExpVariance = finrap_tooltip_formula_html([
     ['type' => 'text', 'text' => LOC('report.col.eac')],
 ]);
 $tooltipExpOrderResult = finrap_tooltip_formula_html([
-    ['type' => 'ref', 'table' => 'FactureerbareProjectPlanningsRegels', 'field' => 'Line_Amount_LCY'],
+    ['type' => 'text', 'text' => LOC('report.contract_value')],
     ['type' => 'text', 'text' => ' - '],
-    ['type' => 'ref', 'table' => 'ProjectFinanceForecast', 'field' => 'expected_costs'],
+    ['type' => 'text', 'text' => LOC('report.col.budget_cost')],
 ]);
 $tooltipIprResult = finrap_tooltip_formula_html([
     ['type' => 'text', 'text' => '('],
@@ -869,6 +871,13 @@ $tooltipTermijnAmount = finrap_tooltip_formula_html([
 ]);
 
 $termijnLines = is_array($modal['termijn_lines'] ?? null) ? $modal['termijn_lines'] : [];
+$termijnLines = array_values(array_filter($termijnLines, static function ($termijnLine): bool {
+    if (!is_array($termijnLine)) {
+        return false;
+    }
+
+    return abs(finance_to_float($termijnLine['amount'] ?? 0.0)) >= 0.000001;
+}));
 $termijnLines = finrap_sort_termijn_lines_by_change_order($termijnLines);
 $finrapClientTaskRows = finrap_task_rows_for_client($taskRows);
 $finrapClientEacOverrides = $eacOverrides;
@@ -2590,6 +2599,7 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                         Number(row.eac_hours || 0),
                         Number(row.booked_hours || 0),
                         Number(row.booked_cost || 0),
+                        Number(row.entered_obligations || 0),
                         Number(row.variance_budget_eac || 0)
                     ];
 
@@ -2809,6 +2819,7 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                         updateTableCell(row.code, 'Budget_Cost', row.budget_cost);
                         updateTableCell(row.code, 'EAC', row.eac);
                         updateTableCell(row.code, 'Booked_Cost', row.booked_cost);
+                        updateTableCell(row.code, 'Entered_Obligations', row.entered_obligations);
                         updateTableCell(row.code, 'Variance_Budget_EAC', row.variance_budget_eac);
                     });
 
