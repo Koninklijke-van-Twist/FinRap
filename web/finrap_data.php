@@ -26,6 +26,8 @@ const FINRAP_PROJECT_TASK_ENTITY_SET_FALLBACK = 'ProjectenJobTaskLines';
 const FINRAP_PROJECT_TASK_CONTRACT_FIELD = 'LVS_Contract_Total_Price_2';
 const FINRAP_PROJECT_TASK_CHANGE_ORDER_FIELD = 'LVS_Job_Change_Order_No';
 const FINRAP_PROJECT_TASK_BASELINE_COST_FIELD = 'LVS_Baseline_Total_Cost';
+const FINRAP_PROJECT_TASK_EAC_COST_FIELD = 'KVT_EAC_Total_Unit_Cost';
+const FINRAP_PROJECT_TASK_EAC_HOURS_FIELD = 'KVT_EAC_Hours_Quantity';
 const FINRAP_PROJECT_TASK_PURCHASES_FIELD = 'LVS_Registered_Purchases_Amt';
 const FINRAP_PROJECT_TASK_INVOICED_PRICE_FIELD = 'Contract_Invoiced_Price';
 const FINRAP_BUDGET_HOURS_FILTER_TYPE_FIELD = 'Type';
@@ -671,36 +673,17 @@ function finrap_load_report_overrides(string $company, string $projectNo, string
 
 function finrap_save_report_overrides(string $company, string $projectNo, string $reportId, array $overrides): bool
 {
-    $path = finrap_report_overrides_path($company, $projectNo, $reportId);
-    $eacByTask = is_array($overrides['eac_by_task'] ?? null) ? $overrides['eac_by_task'] : [];
-    $eacHoursByTask = is_array($overrides['eac_hours_by_task'] ?? null) ? $overrides['eac_hours_by_task'] : [];
+    // EAC waarden komen uit BC; lokale EAC-overrides worden niet meer opgeslagen.
+    unset($overrides, $company, $projectNo, $reportId);
 
-    $payload = [
-        'eac_by_task' => (object) $eacByTask,
-        'eac_hours_by_task' => (object) $eacHoursByTask,
-        'updated_at' => gmdate('c'),
-    ];
-
-    $json = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
-    if (!is_string($json)) {
-        return false;
-    }
-
-    $saved = file_put_contents($path, $json, LOCK_EX) !== false;
-    if ($saved) {
-        finrap_refresh_report_index_entry($company, $projectNo, $reportId);
-        finrap_refresh_dashboard_cache_if_latest($company, $projectNo, $reportId);
-    }
-
-    return $saved;
+    return false;
 }
 
 function finrap_report_has_overrides(array $overrides): bool
 {
-    $eacByTask = is_array($overrides['eac_by_task'] ?? null) ? $overrides['eac_by_task'] : [];
-    $eacHoursByTask = is_array($overrides['eac_hours_by_task'] ?? null) ? $overrides['eac_hours_by_task'] : [];
+    unset($overrides);
 
-    return $eacByTask !== [] || $eacHoursByTask !== [];
+    return false;
 }
 
 function finrap_find_latest_report_id(string $company, string $projectNo): ?string
@@ -733,71 +716,23 @@ function finrap_is_latest_report(string $company, string $projectNo, string $rep
 
 function finrap_can_edit_report_overrides(string $company, string $projectNo, string $reportId): bool
 {
-    $reportId = trim($reportId);
-    if ($reportId === '') {
-        return false;
-    }
+    unset($company, $projectNo, $reportId);
 
-    return finrap_is_latest_report($company, $projectNo, $reportId);
+    return false;
 }
 
 function finrap_copy_report_overrides(string $company, string $projectNo, string $sourceReportId, string $targetReportId): bool
 {
-    $sourceReportId = trim($sourceReportId);
-    $targetReportId = trim($targetReportId);
-    if ($sourceReportId === '' || $targetReportId === '' || strcasecmp($sourceReportId, $targetReportId) === 0) {
-        return false;
-    }
+    unset($company, $projectNo, $sourceReportId, $targetReportId);
 
-    $sourceOverrides = finrap_load_report_overrides($company, $projectNo, $sourceReportId);
-    if (!finrap_report_has_overrides($sourceOverrides)) {
-        return false;
-    }
-
-    $payload = [
-        'eac_by_task' => is_array($sourceOverrides['eac_by_task'] ?? null) ? $sourceOverrides['eac_by_task'] : [],
-        'eac_hours_by_task' => is_array($sourceOverrides['eac_hours_by_task'] ?? null) ? $sourceOverrides['eac_hours_by_task'] : [],
-        'copied_from_report_id' => $sourceReportId,
-        'copied_at' => gmdate('c'),
-    ];
-
-    return finrap_save_report_overrides($company, $projectNo, $targetReportId, $payload);
+    return false;
 }
 
 function finrap_inherit_overrides_from_previous_report(string $company, string $projectNo, string $newReportId): bool
 {
-    $newReportId = trim($newReportId);
-    if ($newReportId === '') {
-        return false;
-    }
+    unset($company, $projectNo, $newReportId);
 
-    $reports = finrap_list_report_snapshots($company, $projectNo);
-    $previousReportId = null;
-    foreach ($reports as $reportEntry) {
-        if (!is_array($reportEntry)) {
-            continue;
-        }
-
-        $reportId = trim((string) ($reportEntry['report_id'] ?? ''));
-        if ($reportId === '' || strcasecmp($reportId, $newReportId) === 0) {
-            continue;
-        }
-
-        $previousReportId = $reportId;
-        break;
-    }
-
-    if ($previousReportId === null) {
-        return false;
-    }
-
-    $copied = finrap_copy_report_overrides($company, $projectNo, $previousReportId, $newReportId);
-    if ($copied) {
-        finrap_refresh_report_index_entry($company, $projectNo, $newReportId);
-        finrap_refresh_dashboard_cache($company, $projectNo);
-    }
-
-    return $copied;
+    return false;
 }
 
 function finrap_project_comments_db_path(string $company, string $projectNo): string
@@ -2500,6 +2435,8 @@ function finrap_project_task_entity_select_fields(string $entitySet): array
 
     if (strcasecmp(trim($entitySet), FINRAP_PROJECT_TASK_ENTITY_SET) === 0) {
         $selectFields[] = FINRAP_PROJECT_TASK_BASELINE_COST_FIELD;
+        $selectFields[] = FINRAP_PROJECT_TASK_EAC_COST_FIELD;
+        $selectFields[] = FINRAP_PROJECT_TASK_EAC_HOURS_FIELD;
         $selectFields[] = FINRAP_PROJECT_TASK_PURCHASES_FIELD;
         $selectFields[] = FINRAP_PROJECT_TASK_INVOICED_PRICE_FIELD;
     }
@@ -2630,6 +2567,32 @@ function finrap_parse_project_task_baseline_costs_by_task(
         $allowedTaskKeys,
         $projectNo,
         FINRAP_PROJECT_TASK_BASELINE_COST_FIELD
+    );
+}
+
+function finrap_parse_project_task_eac_costs_by_task(
+    array $projectTaskRows,
+    array $allowedTaskKeys,
+    string $projectNo = ''
+): array {
+    return finrap_parse_project_task_amounts_by_task(
+        $projectTaskRows,
+        $allowedTaskKeys,
+        $projectNo,
+        FINRAP_PROJECT_TASK_EAC_COST_FIELD
+    );
+}
+
+function finrap_parse_project_task_eac_hours_by_task(
+    array $projectTaskRows,
+    array $allowedTaskKeys,
+    string $projectNo = ''
+): array {
+    return finrap_parse_project_task_amounts_by_task(
+        $projectTaskRows,
+        $allowedTaskKeys,
+        $projectNo,
+        FINRAP_PROJECT_TASK_EAC_HOURS_FIELD
     );
 }
 
@@ -3629,6 +3592,16 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
         array_keys($taskRowsByKey),
         $projectNo
     );
+    $eacCostsByTask = finrap_parse_project_task_eac_costs_by_task(
+        $projectTaskRows,
+        array_keys($taskRowsByKey),
+        $projectNo
+    );
+    $eacHoursByTask = finrap_parse_project_task_eac_hours_by_task(
+        $projectTaskRows,
+        array_keys($taskRowsByKey),
+        $projectNo
+    );
     $purchasesByTask = finrap_parse_project_task_amounts_by_task(
         $projectTaskRows,
         array_keys($taskRowsByKey),
@@ -3654,6 +3627,8 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
 
         $taskRow['Budget_Cost'] = finance_to_float($baselineCostsByTask[$taskKey] ?? 0.0);
         $taskRow['Budget_Revenue'] = finance_to_float($baselineRevenueByTask[$taskKey] ?? 0.0);
+        $taskRow['EAC'] = finance_to_float($eacCostsByTask[$taskKey] ?? 0.0);
+        $taskRow['EAC_Hours'] = finance_to_float($eacHoursByTask[$taskKey] ?? 0.0);
         $taskRow['Entered_Obligations'] = finance_to_float($purchasesByTask[$taskKey] ?? 0.0);
     }
     unset($taskRow);
@@ -3776,6 +3751,7 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
             $budgetHoursTotal = 0.0;
             $budgetRevenueTotal = 0.0;
             $contractValueTotal = 0.0;
+            $eacTotal = 0.0;
             $eacHoursTotal = 0.0;
             $bookedHoursTotal = 0.0;
             $bookedTotal = 0.0;
@@ -3798,6 +3774,7 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
                     $contractValueTotal = finance_add_amount($contractValueTotal, finance_to_float($bookingRow['Contract_Value'] ?? 0.0));
                     $budgetTotal = finance_add_amount($budgetTotal, finance_to_float($bookingRow['Budget_Cost'] ?? 0.0));
                     $budgetHoursTotal = finance_add_amount($budgetHoursTotal, finance_to_float($bookingRow['Budget_Hours'] ?? 0.0));
+                    $eacTotal = finance_add_amount($eacTotal, finance_to_float($bookingRow['EAC'] ?? 0.0));
                     $eacHoursTotal = finance_add_amount($eacHoursTotal, finance_to_float($bookingRow['EAC_Hours'] ?? 0.0));
                     $bookedHoursTotal = finance_add_amount($bookedHoursTotal, finance_to_float($bookingRow['Booked_Hours'] ?? 0.0));
                     $bookedTotal = finance_add_amount($bookedTotal, finance_to_float($bookingRow['Booked_Cost'] ?? 0.0));
@@ -3812,6 +3789,7 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
                 );
                 $taskRowsByKey[$taskKey]['Budget_Cost'] = $budgetTotal;
                 $taskRowsByKey[$taskKey]['Budget_Hours'] = $budgetHoursTotal;
+                $taskRowsByKey[$taskKey]['EAC'] = $eacTotal;
                 $taskRowsByKey[$taskKey]['EAC_Hours'] = $eacHoursTotal;
                 $taskRowsByKey[$taskKey]['Booked_Hours'] = $bookedHoursTotal;
                 $taskRowsByKey[$taskKey]['Booked_Cost'] = $bookedTotal;
@@ -4229,37 +4207,15 @@ function finrap_normalize_override_map(array $overridesByTask): array
 
 function finrap_apply_report_overrides_to_task_rows(array $taskRows, array $overrides): array
 {
-    $eacByTask = is_array($overrides['eac_by_task'] ?? null) ? $overrides['eac_by_task'] : [];
-    $eacHoursByTask = is_array($overrides['eac_hours_by_task'] ?? null) ? $overrides['eac_hours_by_task'] : [];
+    unset($overrides);
 
-    return finrap_apply_eac_overrides_to_task_rows($taskRows, $eacByTask, $eacHoursByTask);
+    // EAC komt uit BC-snapshot; lokale overrides worden niet meer toegepast.
+    return finrap_finalize_task_row_metrics($taskRows);
 }
 
 function finrap_apply_eac_overrides_to_task_rows(array $taskRows, array $eacByTask, array $eacHoursByTask = []): array
 {
-    $normalizedCostOverrides = finrap_normalize_override_map($eacByTask);
-    $normalizedHoursOverrides = finrap_normalize_override_map($eacHoursByTask);
-
-    foreach ($taskRows as &$taskRow) {
-        if (!is_array($taskRow) || (bool) ($taskRow['Is_Total_Row'] ?? false)) {
-            continue;
-        }
-
-        $taskCode = trim((string) ($taskRow['Cost_Group_Code'] ?? ''));
-        $overrideKey = strtolower($taskCode);
-        if ($taskCode !== '' && array_key_exists($overrideKey, $normalizedCostOverrides)) {
-            $taskRow['EAC'] = $normalizedCostOverrides[$overrideKey];
-        } else {
-            $taskRow['EAC'] = finance_to_float($taskRow['Budget_Cost'] ?? 0.0);
-        }
-
-        if ($taskCode !== '' && array_key_exists($overrideKey, $normalizedHoursOverrides)) {
-            $taskRow['EAC_Hours'] = $normalizedHoursOverrides[$overrideKey];
-        } else {
-            $taskRow['EAC_Hours'] = finance_to_float($taskRow['Budget_Hours'] ?? 0.0);
-        }
-    }
-    unset($taskRow);
+    unset($eacByTask, $eacHoursByTask);
 
     return finrap_finalize_task_row_metrics($taskRows);
 }

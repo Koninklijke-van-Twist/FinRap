@@ -185,9 +185,7 @@ function finrap_cost_group_value_tooltip_html(string $columnKey): string
 
     if ($columnKey === 'EAC_Hours') {
         return finrap_tooltip_formula_html([
-            ['type' => 'text', 'text' => LOC('report.tooltip.fallback')],
-            ['type' => 'text', 'text' => LOC('report.col.budget_hours')],
-            ['type' => 'text', 'text' => LOC('report.tooltip.fallback_close')],
+            ['type' => 'ref', 'table' => FINRAP_PROJECT_TASK_ENTITY_SET, 'field' => FINRAP_PROJECT_TASK_EAC_HOURS_FIELD],
         ]);
     }
 
@@ -199,9 +197,7 @@ function finrap_cost_group_value_tooltip_html(string $columnKey): string
 
     if ($columnKey === 'EAC') {
         return finrap_tooltip_formula_html([
-            ['type' => 'text', 'text' => LOC('report.tooltip.fallback')],
-            ['type' => 'ref', 'table' => FINRAP_PROJECT_TASK_ENTITY_SET, 'field' => FINRAP_PROJECT_TASK_BASELINE_COST_FIELD],
-            ['type' => 'text', 'text' => LOC('report.tooltip.fallback_close')],
+            ['type' => 'ref', 'table' => FINRAP_PROJECT_TASK_ENTITY_SET, 'field' => FINRAP_PROJECT_TASK_EAC_COST_FIELD],
         ]);
     }
 
@@ -231,7 +227,7 @@ function finrap_cost_group_value_tooltip_html(string $columnKey): string
         return finrap_tooltip_formula_html([
             ['type' => 'ref', 'table' => FINRAP_PROJECT_TASK_ENTITY_SET, 'field' => FINRAP_PROJECT_TASK_BASELINE_COST_FIELD],
             ['type' => 'text', 'text' => ' - '],
-            ['type' => 'text', 'text' => LOC('report.col.eac')],
+            ['type' => 'ref', 'table' => FINRAP_PROJECT_TASK_ENTITY_SET, 'field' => FINRAP_PROJECT_TASK_EAC_COST_FIELD],
         ]);
     }
 
@@ -358,7 +354,7 @@ function finrap_is_all_zero_totals_row(array $row, array $allTaskRows = []): boo
     return true;
 }
 
-function finrap_render_cost_group_table(array $taskRows, bool $totalsOnly = false, bool $hideAllZeroTotals = false, bool $editableEac = false, string $tableId = ''): void
+function finrap_render_cost_group_table(array $taskRows, bool $totalsOnly = false, bool $hideAllZeroTotals = false, string $tableId = ''): void
 {
     $columns = finrap_cost_group_columns();
     $tableIdAttr = $tableId !== '' ? ' id="' . htmlspecialchars($tableId) . '"' : '';
@@ -438,22 +434,6 @@ function finrap_render_cost_group_table(array $taskRows, bool $totalsOnly = fals
             $value = finance_to_float($row[$columnKey] ?? 0.0);
             $tooltipHtml = finrap_cost_group_value_tooltip_html($columnKey);
 
-            if ($editableEac && ($columnKey === 'EAC' || $columnKey === 'EAC_Hours')) {
-                $isHoursMetric = $columnKey === 'EAC_Hours';
-                $cellClass = trim('is-right finrap-eac-cell ' . finrap_currency_sign_class($value));
-                $display = htmlspecialchars($isHoursMetric ? finrap_format_hours($value) : finrap_format_currency($value));
-                $editKind = $isHoursMetric ? 'eac_hours' : 'eac';
-                if ($isTotalRow) {
-                    echo '<td class="' . htmlspecialchars($cellClass) . '" data-eac-cell="1" data-eac-editable="0" data-metric-key="' . htmlspecialchars($columnKey) . '">' . finrap_render_value_with_tooltip_html($display, $tooltipHtml) . '</td>';
-                } else {
-                    echo '<td class="' . htmlspecialchars($cellClass) . '" data-eac-cell="1" data-eac-editable="1" data-metric-key="' . htmlspecialchars($columnKey) . '">'
-                        . '<button type="button" class="finrap-eac-edit-btn" data-edit-kind="' . htmlspecialchars($editKind) . '" data-task-code="' . htmlspecialchars($taskCode) . '">'
-                        . finrap_render_value_with_tooltip_html($display, $tooltipHtml)
-                        . '</button></td>';
-                }
-                continue;
-            }
-
             if ($columnKey === 'Variance_Budget_EAC') {
                 $cellClass = 'is-right ' . finrap_currency_sign_class($value);
                 $display = htmlspecialchars(finrap_format_currency($value));
@@ -530,94 +510,6 @@ $yearMonth = trim((string) ($_GET['year_month'] ?? ''));
 $autoPrint = (string) ($_GET['print'] ?? '') === '1';
 $embedMode = (string) ($_GET['embed'] ?? '') === '1';
 
-if (($_GET['action'] ?? '') === 'save_overrides') {
-    $saveCompany = trim((string) ($_POST['company'] ?? ''));
-    $saveProjectNo = trim((string) ($_POST['project_no'] ?? ''));
-    $saveReportId = trim((string) ($_POST['report_id'] ?? ''));
-
-    if ($saveCompany === '' || $saveProjectNo === '' || $saveReportId === '') {
-        finrap_json_response(['ok' => false, 'error' => LOC('error.invalid_input')], 400);
-    }
-
-    if (!finrap_can_edit_report_overrides($saveCompany, $saveProjectNo, $saveReportId)) {
-        finrap_json_response(['ok' => false, 'error' => LOC('error.report_overrides_locked')], 403);
-    }
-
-    $overridePayload = [
-        'eac_by_task' => [],
-        'eac_hours_by_task' => [],
-        'updated_at' => gmdate('c'),
-    ];
-
-    $existingOverrides = finrap_load_report_overrides($saveCompany, $saveProjectNo, $saveReportId);
-
-    $eacByTaskRaw = $_POST['eac_by_task'] ?? '{}';
-    if (is_string($eacByTaskRaw)) {
-        $decodedEac = json_decode($eacByTaskRaw, true);
-    } else {
-        $decodedEac = is_array($eacByTaskRaw) ? $eacByTaskRaw : [];
-    }
-
-    if (is_array($decodedEac)) {
-        foreach ($decodedEac as $taskCode => $amount) {
-            $code = trim((string) $taskCode);
-            if ($code === '') {
-                continue;
-            }
-
-            $overridePayload['eac_by_task'][$code] = finance_to_float($amount);
-        }
-    }
-
-    if ($overridePayload['eac_by_task'] === [] && is_array($existingOverrides['eac_by_task'] ?? null)) {
-        foreach ($existingOverrides['eac_by_task'] as $taskCode => $amount) {
-            $code = trim((string) $taskCode);
-            if ($code === '') {
-                continue;
-            }
-
-            $overridePayload['eac_by_task'][$code] = finance_to_float($amount);
-        }
-    }
-
-    $eacHoursByTaskRaw = $_POST['eac_hours_by_task'] ?? '{}';
-    if (is_string($eacHoursByTaskRaw)) {
-        $decodedEacHours = json_decode($eacHoursByTaskRaw, true);
-    } else {
-        $decodedEacHours = is_array($eacHoursByTaskRaw) ? $eacHoursByTaskRaw : [];
-    }
-
-    if (is_array($decodedEacHours)) {
-        foreach ($decodedEacHours as $taskCode => $amount) {
-            $code = trim((string) $taskCode);
-            if ($code === '') {
-                continue;
-            }
-
-            $overridePayload['eac_hours_by_task'][$code] = finance_to_float($amount);
-        }
-    }
-
-    if ($overridePayload['eac_hours_by_task'] === [] && is_array($existingOverrides['eac_hours_by_task'] ?? null)) {
-        foreach ($existingOverrides['eac_hours_by_task'] as $taskCode => $amount) {
-            $code = trim((string) $taskCode);
-            if ($code === '') {
-                continue;
-            }
-
-            $overridePayload['eac_hours_by_task'][$code] = finance_to_float($amount);
-        }
-    }
-
-    $saved = finrap_save_report_overrides($saveCompany, $saveProjectNo, $saveReportId, $overridePayload);
-
-    if (!$saved) {
-        finrap_json_response(['ok' => false, 'error' => LOC('error.save_report_failed')], 500);
-    }
-
-    finrap_json_response(['ok' => true]);
-}
-
 $report = null;
 $error = null;
 if ($company === '' || $projectNo === '') {
@@ -640,9 +532,7 @@ $summary = is_array($report['summary'] ?? null) ? $report['summary'] : [];
 $modal = is_array($report['project_modal'] ?? null) ? $report['project_modal'] : [];
 $taskRows = is_array($modal['task_rows'] ?? null) ? $modal['task_rows'] : [];
 
-$reportOverrides = $reportId !== '' ? finrap_load_report_overrides($company, $projectNo, $reportId) : [];
-$eacOverrides = is_array($reportOverrides['eac_by_task'] ?? null) ? $reportOverrides['eac_by_task'] : [];
-$eacHoursOverrides = is_array($reportOverrides['eac_hours_by_task'] ?? null) ? $reportOverrides['eac_hours_by_task'] : [];
+$reportOverrides = [];
 $taskRows = finrap_normalize_loaded_task_row_fields($taskRows);
 $taskRows = finrap_apply_report_overrides_to_task_rows($taskRows, $reportOverrides);
 
@@ -880,10 +770,7 @@ $termijnLines = array_values(array_filter($termijnLines, static function ($termi
 }));
 $termijnLines = finrap_sort_termijn_lines_by_change_order($termijnLines);
 $finrapClientTaskRows = finrap_task_rows_for_client($taskRows);
-$finrapClientEacOverrides = $eacOverrides;
-$finrapClientEacHoursOverrides = $eacHoursOverrides;
 $finrapReportId = $reportId;
-$finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides($company, $projectNo, $reportId);
 ?>
 <!doctype html>
 <html lang="<?= htmlspecialchars(getHtmlLang(), ENT_QUOTES) ?>">
@@ -1828,94 +1715,6 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
             font-style: italic;
         }
 
-        .finrap-eac-edit-btn,
-        .finrap-editable-value-btn {
-            border: 0;
-            background: transparent;
-            padding: 0;
-            margin: 0;
-            font: inherit;
-            color: inherit;
-            cursor: pointer;
-            text-align: inherit;
-        }
-
-        .finrap-eac-edit-btn:hover,
-        .finrap-editable-value-btn:hover {
-            text-decoration: underline;
-        }
-
-        .finrap-overrides-readonly-notice {
-            margin: 0 0 12px;
-            padding: 10px 12px;
-            border: 1px solid #dbeafe;
-            border-radius: 10px;
-            background: #eff6ff;
-            color: #1e3a8a;
-            font-size: 12px;
-            line-height: 1.45;
-        }
-
-        .finrap-value-modal-overlay {
-            position: fixed;
-            inset: 0;
-            background: rgba(15, 23, 42, .52);
-            display: none;
-            align-items: center;
-            justify-content: center;
-            z-index: 3000;
-            padding: 18px;
-        }
-
-        .finrap-value-modal-overlay.is-visible {
-            display: flex;
-        }
-
-        .finrap-value-modal {
-            width: min(420px, calc(100vw - 24px));
-            background: #fff;
-            border: 1px solid #c9d7eb;
-            border-radius: 14px;
-            box-shadow: 0 18px 42px rgba(15, 23, 42, .28);
-            padding: 16px;
-        }
-
-        .finrap-value-modal-title {
-            margin: 0 0 8px;
-            font-size: 18px;
-            color: var(--kvt-perkins-blue);
-        }
-
-        .finrap-value-modal-notice {
-            margin: 0 0 12px;
-            font-size: 12px;
-            color: #64748b;
-            line-height: 1.45;
-        }
-
-        .finrap-value-modal-label {
-            display: block;
-            margin-bottom: 6px;
-            font-size: 13px;
-            font-weight: 700;
-        }
-
-        .finrap-value-modal-input {
-            width: 100%;
-            min-height: 38px;
-            border: 1px solid #c9d7eb;
-            border-radius: 8px;
-            padding: 8px 10px;
-            font-size: 14px;
-        }
-
-        .finrap-value-modal-actions {
-            display: flex;
-            justify-content: flex-end;
-            gap: 8px;
-            margin-top: 14px;
-        }
-
         @media (max-width: 900px) {
             .analytics-blocks-section {
                 grid-template-columns: 1fr;
@@ -2087,7 +1886,7 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                     </section>
 
                     <section class="project-modal-cost-groups-section">
-                        <?php finrap_render_cost_group_table($taskRows, true, true, false, 'finrapCostTotalsTable'); ?>
+                        <?php finrap_render_cost_group_table($taskRows, true, true, 'finrapCostTotalsTable'); ?>
                     </section>
 
                     <section class="analytics-blocks-section">
@@ -2268,23 +2067,10 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                     </section>
 
                     <section class="project-modal-cost-groups-section">
-                        <?php finrap_render_cost_group_table($taskRows, false, true, $finrapOverridesEditable, 'finrapCostDetailTable'); ?>
+                        <?php finrap_render_cost_group_table($taskRows, false, true, 'finrapCostDetailTable'); ?>
                     </section>
                 <?php endif; ?>
 
-            </div>
-        </div>
-    </div>
-
-    <div id="finrapValueModal" class="finrap-value-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="finrapValueModalTitle">
-        <div class="finrap-value-modal">
-            <h2 id="finrapValueModalTitle" class="finrap-value-modal-title"></h2>
-            <p class="finrap-value-modal-notice"><?= htmlspecialchars(LOC('report.modal.temp_notice'), ENT_QUOTES) ?></p>
-            <label for="finrapValueModalInput" class="finrap-value-modal-label" id="finrapValueModalLabel"><?= htmlspecialchars(LOC('report.modal.value_label'), ENT_QUOTES) ?></label>
-            <input id="finrapValueModalInput" class="finrap-value-modal-input" type="text" inputmode="decimal" autocomplete="off">
-            <div class="finrap-value-modal-actions">
-                <button id="finrapValueModalCancel" class="btn btn-back" type="button"><?= htmlspecialchars(LOC('report.btn.cancel'), ENT_QUOTES) ?></button>
-                <button id="finrapValueModalSave" class="btn btn-print" type="button"><?= htmlspecialchars(LOC('report.btn.save'), ENT_QUOTES) ?></button>
             </div>
         </div>
     </div>
@@ -2294,9 +2080,6 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
             (function ()
             {
                 const finrapI18n = <?= localizationJsTranslations([
-                    'report.modal.eac_title',
-                    'report.modal.eac_hours_title',
-                    'report.modal.value_label',
                     'format.hours',
                 ]) ?>;
                 const finrapContext = {
@@ -2309,47 +2092,9 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                     taskRows: <?= json_encode($finrapClientTaskRows, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>
                 };
 
-                let eacOverrides = Object.assign({}, <?= json_encode($finrapClientEacOverrides, JSON_FORCE_OBJECT) ?>);
-                let eacHoursOverrides = Object.assign({}, <?= json_encode($finrapClientEacHoursOverrides, JSON_FORCE_OBJECT) ?>);
-                const finrapOverridesEditable = <?= $finrapOverridesEditable ? 'true' : 'false' ?>;
-
-                const valueModal = document.getElementById('finrapValueModal');
-                const valueModalTitle = document.getElementById('finrapValueModalTitle');
-                const valueModalInput = document.getElementById('finrapValueModalInput');
-                const valueModalSave = document.getElementById('finrapValueModalSave');
-                const valueModalCancel = document.getElementById('finrapValueModalCancel');
                 const detailTable = document.getElementById('finrapCostDetailTable');
                 const totalsTable = document.getElementById('finrapCostTotalsTable');
                 const costGroupTables = [detailTable, totalsTable].filter(function (table) { return table !== null; });
-
-                let modalKind = '';
-                let modalTaskCode = '';
-
-                function overrideForTask (overridesMap, taskCode)
-                {
-                    if (Object.prototype.hasOwnProperty.call(overridesMap, taskCode))
-                    {
-                        return overridesMap[taskCode];
-                    }
-
-                    const lowerKey = String(taskCode || '').toLowerCase();
-                    if (Object.prototype.hasOwnProperty.call(overridesMap, lowerKey))
-                    {
-                        return overridesMap[lowerKey];
-                    }
-
-                    return undefined;
-                }
-
-                function eacOverrideForTask (taskCode)
-                {
-                    return overrideForTask(eacOverrides, taskCode);
-                }
-
-                function eacHoursOverrideForTask (taskCode)
-                {
-                    return overrideForTask(eacHoursOverrides, taskCode);
-                }
 
                 function updateTooltipDisplay (container, displayText)
                 {
@@ -2365,13 +2110,6 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                     {
                         tooltipHolder.appendChild(tooltipRich);
                     }
-                }
-
-                function parseNumberInput (value)
-                {
-                    const normalized = String(value || '').trim().replace(/\./g, '').replace(',', '.');
-                    const parsed = Number(normalized);
-                    return Number.isFinite(parsed) ? parsed : null;
                 }
 
                 function formatCurrency (value)
@@ -2492,34 +2230,6 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                     const rows = finrapContext.taskRows.map(function (row)
                     {
                         return Object.assign({}, row);
-                    });
-
-                    rows.forEach(function (row)
-                    {
-                        if (row.is_total_row)
-                        {
-                            return;
-                        }
-
-                        const costOverride = eacOverrideForTask(row.code);
-                        if (costOverride !== undefined && costOverride !== null)
-                        {
-                            row.eac = Number(costOverride);
-                        }
-                        else
-                        {
-                            row.eac = Number(row.budget_cost || 0);
-                        }
-
-                        const hoursOverride = eacHoursOverrideForTask(row.code);
-                        if (hoursOverride !== undefined && hoursOverride !== null)
-                        {
-                            row.eac_hours = Number(hoursOverride);
-                        }
-                        else
-                        {
-                            row.eac_hours = Number(row.budget_hours || 0);
-                        }
                     });
 
                     rows.forEach(function (row)
@@ -2730,17 +2440,12 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                         return;
                     }
 
-                    const displayTarget = cell.querySelector('.finrap-eac-edit-btn') || cell;
                     const displayValue = (metricKey === 'Budget_Hours' || metricKey === 'EAC_Hours' || metricKey === 'Booked_Hours')
                         ? formatHours(value)
                         : formatCurrency(value);
-                    updateTooltipDisplay(displayTarget, displayValue);
-                    cell.classList.remove('is-positive', 'is-negative', 'is-zero', 'finrap-eac-cell');
+                    updateTooltipDisplay(cell, displayValue);
+                    cell.classList.remove('is-positive', 'is-negative', 'is-zero');
                     cell.classList.add(signClass(value));
-                    if (metricKey === 'EAC' || metricKey === 'EAC_Hours')
-                    {
-                        cell.classList.add('finrap-eac-cell');
-                    }
                 }
 
                 function updateTableCell (taskCode, metricKey, value)
@@ -2824,155 +2529,6 @@ $finrapOverridesEditable = $reportId !== '' && finrap_can_edit_report_overrides(
                     });
 
                     updateAllZeroRowVisibility(rows);
-                }
-
-                function openValueModal (kind, taskCode, currentValue)
-                {
-                    modalKind = kind;
-                    modalTaskCode = taskCode || '';
-                    if (valueModalTitle)
-                    {
-                        const titleKey = kind === 'eac_hours' ? 'report.modal.eac_hours_title' : 'report.modal.eac_title';
-                        valueModalTitle.textContent = (finrapI18n[titleKey] || '') + (taskCode ? ' (' + taskCode + ')' : '');
-                    }
-                    if (valueModalInput)
-                    {
-                        valueModalInput.value = currentValue === null || currentValue === undefined ? '' : String(currentValue).replace('.', ',');
-                    }
-                    if (valueModal)
-                    {
-                        valueModal.classList.add('is-visible');
-                    }
-                    if (valueModalInput)
-                    {
-                        valueModalInput.focus();
-                        valueModalInput.select();
-                    }
-                }
-
-                function closeValueModal ()
-                {
-                    modalKind = '';
-                    modalTaskCode = '';
-                    if (valueModal)
-                    {
-                        valueModal.classList.remove('is-visible');
-                    }
-                }
-
-                function saveOverrides ()
-                {
-                    if (!finrapContext.reportId)
-                    {
-                        return Promise.resolve(null);
-                    }
-
-                    const body = new URLSearchParams({
-                        company: finrapContext.company,
-                        project_no: finrapContext.projectNo,
-                        report_id: finrapContext.reportId,
-                        eac_by_task: JSON.stringify(eacOverrides),
-                        eac_hours_by_task: JSON.stringify(eacHoursOverrides)
-                    });
-
-                    return fetch('finrap.php?action=save_overrides', {
-                        method: 'POST',
-                        credentials: 'same-origin',
-                        body: body
-                    }).then(function (res)
-                    {
-                        return res.json();
-                    });
-                }
-
-                if (finrapOverridesEditable)
-                {
-                    if (detailTable)
-                    {
-                        detailTable.addEventListener('click', function (event)
-                        {
-                            const target = event.target;
-                            if (!(target instanceof Element))
-                            {
-                                return;
-                            }
-
-                            const button = target.closest('.finrap-eac-edit-btn');
-                            if (!(button instanceof HTMLButtonElement))
-                            {
-                                return;
-                            }
-
-                            const taskCode = String(button.dataset.taskCode || '').trim();
-                            const editKind = String(button.dataset.editKind || 'eac').trim() || 'eac';
-                            if (taskCode === '')
-                            {
-                                return;
-                            }
-
-                            const rows = recalculateTaskRows();
-                            const taskRow = rows.find(function (row) { return row.code === taskCode; });
-                            if (editKind === 'eac_hours')
-                            {
-                                const currentHours = eacHoursOverrideForTask(taskCode);
-                                const displayHours = currentHours !== undefined
-                                    ? currentHours
-                                    : (taskRow ? Number(taskRow.budget_hours || 0) : 0);
-                                openValueModal('eac_hours', taskCode, displayHours);
-                                return;
-                            }
-
-                            const current = eacOverrideForTask(taskCode);
-                            const displayValue = current !== undefined
-                                ? current
-                                : (taskRow ? Number(taskRow.budget_cost || 0) : 0);
-                            openValueModal('eac', taskCode, displayValue);
-                        });
-                    }
-
-                    if (valueModalCancel)
-                    {
-                        valueModalCancel.addEventListener('click', closeValueModal);
-                    }
-
-                    if (valueModal)
-                    {
-                        valueModal.addEventListener('click', function (event)
-                        {
-                            if (event.target === valueModal)
-                            {
-                                closeValueModal();
-                            }
-                        });
-                    }
-
-                    if (valueModalSave)
-                    {
-                        valueModalSave.addEventListener('click', function ()
-                        {
-                            const parsed = parseNumberInput(valueModalInput ? valueModalInput.value : '');
-                            if (parsed === null)
-                            {
-                                return;
-                            }
-
-                            const saveKind = modalKind;
-                            const saveTaskCode = modalTaskCode;
-
-                            if (saveKind === 'eac' && saveTaskCode !== '')
-                            {
-                                eacOverrides[saveTaskCode] = parsed;
-                            }
-                            else if (saveKind === 'eac_hours' && saveTaskCode !== '')
-                            {
-                                eacHoursOverrides[saveTaskCode] = parsed;
-                            }
-
-                            closeValueModal();
-                            renderCalculatedState();
-                            saveOverrides().catch(function () { return null; });
-                        });
-                    }
                 }
 
                 renderCalculatedState();
