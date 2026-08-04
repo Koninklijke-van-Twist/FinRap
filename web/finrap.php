@@ -1036,6 +1036,86 @@ $finrapReportId = $reportId;
             text-align: right;
         }
 
+        .project-metric-th-with-help {
+            display: inline-flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 6px;
+        }
+
+        .finrap-column-help-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 16px;
+            height: 16px;
+            padding: 0;
+            border: 1px solid rgba(255, 255, 255, 0.75);
+            border-radius: 50%;
+            background: transparent;
+            color: #fff;
+            font-size: 11px;
+            font-weight: 700;
+            line-height: 1;
+            cursor: pointer;
+            flex: 0 0 auto;
+        }
+
+        .finrap-column-help-btn:hover,
+        .finrap-column-help-btn:focus-visible {
+            background: rgba(255, 255, 255, 0.18);
+            outline: none;
+        }
+
+        .finrap-info-modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(15, 23, 42, .52);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 3000;
+            padding: 18px;
+        }
+
+        .finrap-info-modal-overlay.is-visible {
+            display: flex;
+        }
+
+        .finrap-info-modal {
+            width: min(460px, calc(100vw - 24px));
+            background: #fff;
+            border: 1px solid #c9d7eb;
+            border-radius: 14px;
+            box-shadow: 0 18px 42px rgba(15, 23, 42, .28);
+            padding: 16px;
+        }
+
+        .finrap-info-modal-title {
+            margin: 0 0 10px;
+            font-size: 18px;
+            color: var(--kvt-perkins-blue);
+        }
+
+        .finrap-info-modal-body {
+            margin: 0 0 14px;
+            font-size: 14px;
+            line-height: 1.5;
+            color: #334155;
+        }
+
+        .finrap-info-modal-actions {
+            display: flex;
+            justify-content: flex-end;
+        }
+
+        @media print {
+            .finrap-column-help-btn,
+            .finrap-info-modal-overlay {
+                display: none !important;
+            }
+        }
+
         .project-cost-group-table .is-description {
             white-space: pre;
         }
@@ -1817,7 +1897,16 @@ $finrapReportId = $reportId;
                                     <?php endif; ?>
                                     <th class="is-right" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.contract_value'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.contract_value'), ENT_QUOTES) ?></th>
                                     <?php if ($showHeaderBudgetRevenueColumn): ?>
-                                    <th class="is-right" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.total_budget_revenue'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.col.budget_revenue'), ENT_QUOTES) ?></th>
+                                    <th class="is-right" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.total_budget_revenue'), ENT_QUOTES) ?>">
+                                        <span class="project-metric-th-with-help">
+                                            <button type="button"
+                                                id="budgetRevenueWhyBtn"
+                                                class="finrap-column-help-btn"
+                                                aria-label="<?= htmlspecialchars(LOC('report.budget_revenue.why_aria'), ENT_QUOTES) ?>"
+                                                title="<?= htmlspecialchars(LOC('report.budget_revenue.why_title'), ENT_QUOTES) ?>">?</button>
+                                            <span><?= htmlspecialchars(LOC('report.col.budget_revenue'), ENT_QUOTES) ?></span>
+                                        </span>
+                                    </th>
                                     <?php endif; ?>
                                     <th class="is-right" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.total_direct_cost'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.total_direct_cost'), ENT_QUOTES) ?>
                                     </th>
@@ -2075,10 +2164,82 @@ $finrapReportId = $reportId;
         </div>
     </div>
 
+    <?php if ($error === null && $showHeaderBudgetRevenueColumn): ?>
+    <div id="budgetRevenueWhyModal" class="finrap-info-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="budgetRevenueWhyTitle" hidden>
+        <div class="finrap-info-modal">
+            <h2 id="budgetRevenueWhyTitle" class="finrap-info-modal-title"><?= htmlspecialchars(LOC('report.budget_revenue.why_title'), ENT_QUOTES) ?></h2>
+            <p class="finrap-info-modal-body"><?= htmlspecialchars(LOC('report.budget_revenue.why_body'), ENT_QUOTES) ?></p>
+            <div class="finrap-info-modal-actions">
+                <button id="budgetRevenueWhyClose" class="btn btn-back" type="button"><?= htmlspecialchars(LOC('report.budget_revenue.why_close'), ENT_QUOTES) ?></button>
+            </div>
+        </div>
+    </div>
+    <?php endif; ?>
+
     <?php if ($error === null): ?>
         <script>
             (function ()
             {
+                const budgetRevenueWhyBtn = document.getElementById('budgetRevenueWhyBtn');
+                const budgetRevenueWhyModal = document.getElementById('budgetRevenueWhyModal');
+                const budgetRevenueWhyClose = document.getElementById('budgetRevenueWhyClose');
+
+                function openBudgetRevenueWhyModal ()
+                {
+                    if (!budgetRevenueWhyModal)
+                    {
+                        return;
+                    }
+
+                    budgetRevenueWhyModal.hidden = false;
+                    budgetRevenueWhyModal.classList.add('is-visible');
+                }
+
+                function closeBudgetRevenueWhyModal ()
+                {
+                    if (!budgetRevenueWhyModal)
+                    {
+                        return;
+                    }
+
+                    budgetRevenueWhyModal.classList.remove('is-visible');
+                    budgetRevenueWhyModal.hidden = true;
+                }
+
+                if (budgetRevenueWhyBtn)
+                {
+                    budgetRevenueWhyBtn.addEventListener('click', function (event)
+                    {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        openBudgetRevenueWhyModal();
+                    });
+                }
+
+                if (budgetRevenueWhyClose)
+                {
+                    budgetRevenueWhyClose.addEventListener('click', closeBudgetRevenueWhyModal);
+                }
+
+                if (budgetRevenueWhyModal)
+                {
+                    budgetRevenueWhyModal.addEventListener('click', function (event)
+                    {
+                        if (event.target === budgetRevenueWhyModal)
+                        {
+                            closeBudgetRevenueWhyModal();
+                        }
+                    });
+                }
+
+                document.addEventListener('keydown', function (event)
+                {
+                    if (event.key === 'Escape' && budgetRevenueWhyModal && budgetRevenueWhyModal.classList.contains('is-visible'))
+                    {
+                        closeBudgetRevenueWhyModal();
+                    }
+                });
+
                 const finrapI18n = <?= localizationJsTranslations([
                     'format.hours',
                 ]) ?>;
