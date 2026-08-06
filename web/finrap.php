@@ -587,6 +587,7 @@ $pocBaseline = finrap_calculate_poc_percent($bookedCostTotal, $budgetCostTotal);
 $pocEac = finrap_calculate_poc_percent($bookedCostTotal, $eacTotal);
 $pocBaselineHours = finrap_calculate_poc_percent($bookedHoursTotal, $budgetHoursTotal);
 $pocEacHours = finrap_calculate_poc_percent($bookedHoursTotal, $eacHoursTotal);
+$workInProgressProfit = $grossProfit * ($pocEac / 100.0);
 
 $estimatedHoursTable = FINRAP_ESTIMATED_HOURS_ENTITY_SET !== '' ? FINRAP_ESTIMATED_HOURS_ENTITY_SET : FINRAP_BUDGET_HOURS_ENTITY_SET;
 $estimatedHoursField = FINRAP_ESTIMATED_HOURS_FIELD !== '' ? FINRAP_ESTIMATED_HOURS_FIELD : FINRAP_BUDGET_HOURS_FIELD;
@@ -659,6 +660,11 @@ $tooltipPocEacHours = finrap_tooltip_formula_html([
     ['type' => 'text', 'text' => LOC('report.col.booked_hours')],
     ['type' => 'text', 'text' => ' / '],
     ['type' => 'text', 'text' => LOC('report.col.eac_hours')],
+]);
+$tooltipWorkInProgressProfit = finrap_tooltip_formula_html([
+    ['type' => 'text', 'text' => LOC('report.gross_profit')],
+    ['type' => 'text', 'text' => ' × '],
+    ['type' => 'text', 'text' => LOC('report.exp.poc_eac')],
 ]);
 $tooltipProjectNo = finrap_tooltip_formula_html([
     ['type' => 'ref', 'table' => 'Projecten', 'field' => 'No'],
@@ -2054,21 +2060,27 @@ $finrapReportId = $reportId;
                                 </div>
                                 <div class="analytics-row">
                                     <span class="analytics-label"
-                                        data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.exp.poc_eac'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.exp.poc_eac'), ENT_QUOTES) ?></span>
-                                    <span
-                                        class="analytics-value has-value-tooltip" id="pocEacValue"><?= htmlspecialchars(finrap_format_percent($pocEac)) ?><span class="value-tooltip-rich"><?= $tooltipPocEac ?></span></span>
-                                </div>
-                                <div class="analytics-row">
-                                    <span class="analytics-label"
                                         data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.exp.poc_baseline_hours'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.exp.poc_baseline_hours'), ENT_QUOTES) ?></span>
                                     <span
                                         class="analytics-value has-value-tooltip" id="pocBaselineHoursValue"><?= htmlspecialchars(finrap_format_percent($pocBaselineHours)) ?><span class="value-tooltip-rich"><?= $tooltipPocBaselineHours ?></span></span>
                                 </div>
                                 <div class="analytics-row">
                                     <span class="analytics-label"
+                                        data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.exp.poc_eac'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.exp.poc_eac'), ENT_QUOTES) ?></span>
+                                    <span
+                                        class="analytics-value has-value-tooltip" id="pocEacValue"><?= htmlspecialchars(finrap_format_percent($pocEac)) ?><span class="value-tooltip-rich"><?= $tooltipPocEac ?></span></span>
+                                </div>
+                                <div class="analytics-row">
+                                    <span class="analytics-label"
                                         data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.exp.poc_eac_hours'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.exp.poc_eac_hours'), ENT_QUOTES) ?></span>
                                     <span
                                         class="analytics-value has-value-tooltip" id="pocEacHoursValue"><?= htmlspecialchars(finrap_format_percent($pocEacHours)) ?><span class="value-tooltip-rich"><?= $tooltipPocEacHours ?></span></span>
+                                </div>
+                                <div class="analytics-row">
+                                    <span class="analytics-label"
+                                        data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.exp.work_in_progress_profit'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.exp.work_in_progress_profit'), ENT_QUOTES) ?></span>
+                                    <span
+                                        class="analytics-value <?= finrap_currency_sign_class($workInProgressProfit) ?> has-value-tooltip" id="metricWorkInProgressProfit"><?= htmlspecialchars(finrap_format_currency($workInProgressProfit)) ?><span class="value-tooltip-rich"><?= $tooltipWorkInProgressProfit ?></span></span>
                                 </div>
                             </div>
                         </div>
@@ -2657,9 +2669,10 @@ $finrapReportId = $reportId;
                     updateMetricCell('metricOrderResult', orderResult);
                     updateAnalyticsValue('metricExpVariance', expVariance, formatCurrency);
                     updateAnalyticsValue('pocBaselineValue', pocBaseline, formatPercent);
-                    updateAnalyticsValue('pocEacValue', pocEac, formatPercent);
                     updateAnalyticsValue('pocBaselineHoursValue', pocBaselineHours, formatPercent);
+                    updateAnalyticsValue('pocEacValue', pocEac, formatPercent);
                     updateAnalyticsValue('pocEacHoursValue', pocEacHours, formatPercent);
+                    updateAnalyticsValue('metricWorkInProgressProfit', grossProfit * (pocEac / 100), formatCurrency);
 
                     const variancePctEl = document.getElementById('metricVariancePct');
                     if (variancePctEl)
