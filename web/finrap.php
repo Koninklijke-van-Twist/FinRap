@@ -589,8 +589,8 @@ $pocBaselineHours = finrap_calculate_poc_percent($bookedHoursTotal, $budgetHours
 $pocEacHours = finrap_calculate_poc_percent($bookedHoursTotal, $eacHoursTotal);
 $workInProgressProfit = $grossProfit * ($pocEac / 100.0);
 
-$estimatedHoursTable = FINRAP_ESTIMATED_HOURS_ENTITY_SET !== '' ? FINRAP_ESTIMATED_HOURS_ENTITY_SET : FINRAP_BUDGET_HOURS_ENTITY_SET;
-$estimatedHoursField = FINRAP_ESTIMATED_HOURS_FIELD !== '' ? FINRAP_ESTIMATED_HOURS_FIELD : FINRAP_BUDGET_HOURS_FIELD;
+$estimatedHoursTable = FINRAP_PROJECT_TASK_ENTITY_SET;
+$estimatedHoursField = FINRAP_PROJECT_TASK_EAC_HOURS_FIELD;
 
 $tooltipBudgetHours = finrap_tooltip_formula_html([
     ['type' => 'ref', 'table' => FINRAP_BUDGET_HOURS_ENTITY_SET, 'field' => FINRAP_BUDGET_HOURS_FIELD],
@@ -719,6 +719,11 @@ $tooltipGrossProfit = finrap_tooltip_formula_html([
     ['type' => 'ref', 'table' => FINRAP_PROJECT_TASK_ENTITY_SET, 'field' => FINRAP_PROJECT_TASK_CONTRACT_FIELD],
     ['type' => 'text', 'text' => ' - '],
     ['type' => 'ref', 'table' => FINRAP_PROJECT_TASK_ENTITY_SET, 'field' => FINRAP_PROJECT_TASK_BASELINE_COST_FIELD],
+]);
+$tooltipEacGrossProfit = finrap_tooltip_formula_html([
+    ['type' => 'ref', 'table' => FINRAP_PROJECT_TASK_ENTITY_SET, 'field' => FINRAP_PROJECT_TASK_CONTRACT_FIELD],
+    ['type' => 'text', 'text' => ' - '],
+    ['type' => 'ref', 'table' => FINRAP_PROJECT_TASK_ENTITY_SET, 'field' => FINRAP_PROJECT_TASK_EAC_COST_FIELD],
 ]);
 $tooltipVarianceValue = finrap_tooltip_formula_html([
     ['type' => 'ref', 'table' => FINRAP_PROJECT_TASK_ENTITY_SET, 'field' => FINRAP_PROJECT_TASK_BASELINE_COST_FIELD],
@@ -1918,6 +1923,8 @@ $finrapReportId = $reportId;
                                     </th>
                                     <th class="is-right" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.gross_profit'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.gross_profit'), ENT_QUOTES) ?>
                                     </th>
+                                    <th class="is-right" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.eac_gross_profit'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.eac_gross_profit'), ENT_QUOTES) ?>
+                                    </th>
                                     <th class="is-right" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.col.booked_cost'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.col.booked_cost'), ENT_QUOTES) ?></th>
                                     <th class="is-right" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.installments_invoiced'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.installments_invoiced'), ENT_QUOTES) ?>
                                     </th>
@@ -1939,6 +1946,11 @@ $finrapReportId = $reportId;
                                     $headerBudgetRevenue = finance_to_float($headerMetricRow['budget_revenue'] ?? ($isProjectHeaderRow ? $budgetRevenueTotal : 0.0));
                                     $headerTotalDirectCost = finance_to_float($headerMetricRow['total_direct_cost'] ?? ($isProjectHeaderRow ? $totalDirectCost : 0.0));
                                     $headerGrossProfit = finance_to_float($headerMetricRow['gross_profit'] ?? ($isProjectHeaderRow ? $grossProfit : ($headerContractValue - $headerTotalDirectCost)));
+                                    $headerEacCost = finance_to_float($headerMetricRow['eac_cost'] ?? ($isProjectHeaderRow ? $eacTotal : 0.0));
+                                    $headerEacGrossProfit = finance_to_float(
+                                        $headerMetricRow['eac_gross_profit']
+                                            ?? ($isProjectHeaderRow ? ($contractValue - $eacTotal) : ($headerContractValue - $headerEacCost))
+                                    );
                                     $headerBookedCost = finance_to_float($headerMetricRow['booked_cost'] ?? ($isProjectHeaderRow ? $bookedCostTotal : 0.0));
                                     $headerInstallmentsInvoiced = finance_to_float($headerMetricRow['installments_invoiced'] ?? ($isProjectHeaderRow ? $installmentsInvoiced : 0.0));
                                     $headerInstallmentsReceived = array_key_exists('installments_received', $headerMetricRow)
@@ -1962,6 +1974,9 @@ $finrapReportId = $reportId;
                                     </td>
                                     <td class="is-right <?= finrap_currency_sign_class($headerGrossProfit) ?>"<?= $isProjectHeaderRow ? ' id="metricGrossProfit"' : '' ?>>
                                         <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($headerGrossProfit)), $tooltipGrossProfit) ?>
+                                    </td>
+                                    <td class="is-right <?= finrap_currency_sign_class($headerEacGrossProfit) ?>"<?= $isProjectHeaderRow ? ' id="metricEacGrossProfit"' : '' ?>>
+                                        <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($headerEacGrossProfit)), $tooltipEacGrossProfit) ?>
                                     </td>
                                     <td class="is-right <?= finrap_currency_sign_class($headerBookedCost) ?>"<?= $isProjectHeaderRow ? ' id="metricBookedCost"' : '' ?>>
                                         <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($headerBookedCost)), finrap_cost_group_value_tooltip_html('Booked_Cost')) ?>
@@ -2653,6 +2668,7 @@ $finrapReportId = $reportId;
                     const bookedHours = Number(summaryTotals.booked_hours || 0);
                     const variance = Number(summaryTotals.variance_budget_eac || (budgetCost - eac));
                     const grossProfit = Number(finrapContext.contractValue || 0) - Number(summaryTotals.budget_cost || 0);
+                    const eacGrossProfit = Number(finrapContext.contractValue || 0) - Number(summaryTotals.eac || 0);
                     const orderResult = grossProfit + variance;
                     const pocBaseline = calculatePocPercent(bookedCost, budgetCost);
                     const pocEac = calculatePocPercent(bookedCost, eac);
@@ -2665,6 +2681,7 @@ $finrapReportId = $reportId;
 
                     updateMetricCell('metricBudgetCost', budgetCost);
                     updateMetricCell('metricGrossProfit', grossProfit);
+                    updateMetricCell('metricEacGrossProfit', eacGrossProfit);
                     updateMetricCell('metricBookedCost', bookedCost);
                     updateMetricCell('metricOrderResult', orderResult);
                     updateAnalyticsValue('metricExpVariance', expVariance, formatCurrency);
