@@ -3053,7 +3053,9 @@ function finrap_build_single_header_metric_row(
     }
 
     $totalDirectCost = finance_to_float($taskMetrics['Budget_Cost'] ?? 0.0);
+    $eacCost = finance_to_float($taskMetrics['EAC'] ?? 0.0);
     $grossProfit = $contractValue - $totalDirectCost;
+    $eacGrossProfit = $contractValue - $eacCost;
     $variance = finance_to_float($taskMetrics['Variance_Budget_EAC'] ?? 0.0);
 
     $row = [
@@ -3063,6 +3065,8 @@ function finrap_build_single_header_metric_row(
         'budget_revenue' => finance_to_float($taskMetrics['Budget_Revenue'] ?? 0.0),
         'total_direct_cost' => $totalDirectCost,
         'gross_profit' => $grossProfit,
+        'eac_cost' => $eacCost,
+        'eac_gross_profit' => $eacGrossProfit,
         'booked_cost' => finance_to_float($taskMetrics['Booked_Cost'] ?? 0.0),
         'entered_obligations' => finance_to_float($taskMetrics['Entered_Obligations'] ?? 0.0),
         'order_result' => $grossProfit + $variance,
@@ -3732,9 +3736,16 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
         $bookingRows[$taskKey]['Booked_Hours'] = $bookedHours;
     }
 
-    $hoursEstimated = finrap_fetch_estimated_hours_total($baseUrl, $environment, $company, $auth, $projectFilter, $ttl);
-    if ($hoursEstimated === null) {
-        $hoursEstimated = $hoursBudget;
+    $hoursEstimated = 0.0;
+    foreach ($bookingRows as $bookingRow) {
+        if (!is_array($bookingRow)) {
+            continue;
+        }
+
+        $hoursEstimated = finance_add_amount(
+            $hoursEstimated,
+            finance_to_float($bookingRow['EAC_Hours'] ?? 0.0)
+        );
     }
 
     $modal['hours_budget'] = $hoursBudget;
