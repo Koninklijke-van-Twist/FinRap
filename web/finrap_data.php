@@ -3023,14 +3023,12 @@ function finrap_build_single_header_metric_row(
             FINRAP_PROJECT_TASK_INVOICED_PRICE_FIELD,
             $prjTaskKeys
         );
-        $taskMetrics = finrap_task_metrics_from_total_row(finrap_find_project_root_total_row($allTaskRows));
-        if ($taskMetrics === null) {
-            $taskMetrics = finrap_aggregate_detail_task_metrics_for_change_order(
-                $detailTaskRows,
-                $changeOrderByTask,
-                ''
-            );
-        }
+        // Zelfde scope als contractwaarde: detailregels zonder meerwerk/suborder.
+        // Niet de root-totaalregel gebruiken; die rollt suborders mee.
+        $taskMetrics = finrap_aggregate_detail_task_metrics_for_task_keys(
+            $detailTaskRows,
+            $prjTaskKeys
+        );
     } else {
         $contractValue = finrap_sum_project_task_amount_for_change_order_group(
             $projectTaskRows,
