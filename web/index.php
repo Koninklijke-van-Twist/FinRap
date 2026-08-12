@@ -4470,6 +4470,15 @@ $indexI18nKeys = [
 				findProject(projectInput.value);
 			});
 
+			projectInput.addEventListener('keydown', function (event)
+			{
+				if (event.key === 'Enter')
+				{
+					event.preventDefault();
+					findProject(projectInput.value);
+				}
+			});
+
 			if (companySelect)
 			{
 				companySelect.addEventListener('change', saveSelectedCompanyPreference);
