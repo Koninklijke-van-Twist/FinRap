@@ -30,6 +30,10 @@ const FINRAP_PROJECT_TASK_EAC_COST_FIELD = 'KVT_EAC_Total_Unit_Cost';
 const FINRAP_PROJECT_TASK_EAC_HOURS_FIELD = 'KVT_EAC_Hours_Quantity';
 const FINRAP_PROJECT_TASK_PURCHASES_FIELD = 'LVS_Registered_Purchases_Amt';
 const FINRAP_PROJECT_TASK_INVOICED_PRICE_FIELD = 'Contract_Invoiced_Price';
+const FINRAP_PLANNING_LINES_ENTITY_SET = 'LVS_JobPlanningLinesSub';
+const FINRAP_ITEM_CARD_ENTITY_SET = 'AppItemCard';
+const FINRAP_STANDARD_COSTING_METHOD = 'Standard';
+const FINRAP_ITEM_COSTING_METHOD_CHUNK_SIZE = 40;
 const FINRAP_BUDGET_HOURS_FILTER_TYPE_FIELD = 'Type';
 const FINRAP_BUDGET_HOURS_FILTER_RESOURCE_TYPE_FIELD = 'Resource_Type';
 const FINRAP_BUDGET_HOURS_FILTER_UOM_FIELD = 'Unit_of_Measure_Code';
@@ -156,6 +160,8 @@ function finrap_report_index_entry_from_payload(string $company, string $project
     $taskRows = finrap_apply_report_overrides_to_task_rows($taskRows, $overrides);
     $summaryTotals = finrap_get_report_summary_totals($taskRows);
     $bookedCost = finance_to_float($summaryTotals['Booked_Cost'] ?? 0.0);
+    $unpostedCost = finance_to_float($summaryTotals['Unposted_Cost'] ?? 0.0);
+    $pocCostProgress = finance_column_poc_cost_progress($bookedCost, $unpostedCost);
     $budgetCost = finance_to_float($summaryTotals['Budget_Cost'] ?? 0.0);
     $eacTotal = finance_to_float($summaryTotals['EAC'] ?? 0.0);
     $bookedHours = finance_to_float($summaryTotals['Booked_Hours'] ?? 0.0);
@@ -168,8 +174,8 @@ function finrap_report_index_entry_from_payload(string $company, string $project
         'auto_report' => finrap_is_auto_report($payload),
         'created_by' => finrap_email_local_part((string) ($payload['created_by_email'] ?? '')),
         'installments_received' => round(finance_to_float($modal['installments_received'] ?? 0.0), 2),
-        'poc_baseline' => round(finrap_calculate_poc_percent($bookedCost, $budgetCost), 2),
-        'poc_eac' => round(finrap_calculate_poc_percent($bookedCost, $eacTotal), 2),
+        'poc_baseline' => round(finrap_calculate_poc_percent($pocCostProgress, $budgetCost), 2),
+        'poc_eac' => round(finrap_calculate_poc_percent($pocCostProgress, $eacTotal), 2),
         'poc_baseline_hours' => round(finrap_calculate_poc_percent($bookedHours, $budgetHours), 2),
         'poc_eac_hours' => round(finrap_calculate_poc_percent($bookedHours, $eacHours), 2),
     ];
@@ -1678,6 +1684,8 @@ function finrap_compute_report_poc_metrics(string $company, string $projectNo, s
     $summaryTotals = finrap_get_report_summary_totals($taskRows);
 
     $bookedCost = finance_to_float($summaryTotals['Booked_Cost'] ?? 0.0);
+    $unpostedCost = finance_to_float($summaryTotals['Unposted_Cost'] ?? 0.0);
+    $pocCostProgress = finance_column_poc_cost_progress($bookedCost, $unpostedCost);
     $budgetCost = finance_to_float($summaryTotals['Budget_Cost'] ?? 0.0);
     $eacTotal = finance_to_float($summaryTotals['EAC'] ?? 0.0);
     $bookedHours = finance_to_float($summaryTotals['Booked_Hours'] ?? 0.0);
@@ -1685,8 +1693,8 @@ function finrap_compute_report_poc_metrics(string $company, string $projectNo, s
     $eacHours = finance_to_float($summaryTotals['EAC_Hours'] ?? 0.0);
 
     return [
-        'poc_baseline' => finrap_calculate_poc_percent($bookedCost, $budgetCost),
-        'poc_eac' => finrap_calculate_poc_percent($bookedCost, $eacTotal),
+        'poc_baseline' => finrap_calculate_poc_percent($pocCostProgress, $budgetCost),
+        'poc_eac' => finrap_calculate_poc_percent($pocCostProgress, $eacTotal),
         'poc_baseline_hours' => finrap_calculate_poc_percent($bookedHours, $budgetHours),
         'poc_eac_hours' => finrap_calculate_poc_percent($bookedHours, $eacHours),
     ];
@@ -2773,6 +2781,7 @@ function finrap_task_metrics_from_total_row(?array $totalRow): ?array
         'Budget_Cost' => $budgetCost,
         'EAC' => $eac,
         'Booked_Cost' => finance_to_float($totalRow['Booked_Cost'] ?? 0.0),
+        'Unposted_Cost' => finance_to_float($totalRow['Unposted_Cost'] ?? 0.0),
         'Entered_Obligations' => finance_to_float($totalRow['Entered_Obligations'] ?? 0.0),
         'Variance_Budget_EAC' => finance_to_float(
             $totalRow['Variance_Budget_EAC'] ?? finance_calculate_result($budgetCost, $eac)
@@ -2842,6 +2851,116 @@ function finrap_sum_project_task_amount_for_task_keys(
     return $total;
 }
 
+function finrap_is_standard_costing_method(string $costingMethod): bool
+{
+    return strcasecmp(trim($costingMethod), FINRAP_STANDARD_COSTING_METHOD) === 0;
+}
+
+function finrap_fetch_standard_costing_item_lookup(
+    string $baseUrl,
+    string $environment,
+    string $company,
+    array $auth,
+    int $ttl,
+    array $itemNos
+): array {
+    $uniqueItemNos = [];
+    foreach ($itemNos as $itemNo) {
+        $itemNoText = trim((string) $itemNo);
+        if ($itemNoText === '') {
+            continue;
+        }
+        $uniqueItemNos[strtolower($itemNoText)] = $itemNoText;
+    }
+
+    if ($uniqueItemNos === []) {
+        return [];
+    }
+
+    $standardLookup = [];
+    $chunks = array_chunk(array_values($uniqueItemNos), max(1, FINRAP_ITEM_COSTING_METHOD_CHUNK_SIZE));
+    foreach ($chunks as $chunk) {
+        $filters = [];
+        foreach ($chunk as $itemNoText) {
+            $filters[] = "No eq '" . str_replace("'", "''", $itemNoText) . "'";
+        }
+        if ($filters === []) {
+            continue;
+        }
+
+        try {
+            $itemUrl = finrap_company_entity_url_with_query($baseUrl, $environment, $company, FINRAP_ITEM_CARD_ENTITY_SET, [
+                '$select' => 'No,Costing_Method',
+                '$filter' => '(' . implode(' or ', $filters) . ')',
+            ]);
+            $itemRows = odata_get_all($itemUrl, $auth, $ttl);
+        } catch (Throwable $ignoredItemLoadError) {
+            continue;
+        }
+
+        foreach ($itemRows as $itemRow) {
+            if (!is_array($itemRow)) {
+                continue;
+            }
+
+            $itemNoText = trim((string) ($itemRow['No'] ?? ''));
+            if ($itemNoText === '') {
+                continue;
+            }
+
+            if (!finrap_is_standard_costing_method((string) ($itemRow['Costing_Method'] ?? ''))) {
+                continue;
+            }
+
+            $standardLookup[strtolower($itemNoText)] = true;
+        }
+    }
+
+    return $standardLookup;
+}
+
+function finrap_parse_unposted_costs_by_task(array $planningRows, array $standardItemLookup): array
+{
+    $unpostedByTask = [];
+
+    foreach ($planningRows as $planningRow) {
+        if (!is_array($planningRow)) {
+            continue;
+        }
+
+        $taskNo = trim((string) ($planningRow['Job_Task_No'] ?? ''));
+        $itemNo = trim((string) ($planningRow['No'] ?? ''));
+        if ($taskNo === '' || $itemNo === '') {
+            continue;
+        }
+
+        if (!isset($standardItemLookup[strtolower($itemNo)])) {
+            continue;
+        }
+
+        $qtyToTransfer = finance_to_float($planningRow['Qty_to_Transfer_to_Journal'] ?? 0.0);
+        if (abs($qtyToTransfer) < 0.000001) {
+            continue;
+        }
+
+        $lineUnposted = finance_column_unposted_cost_line(
+            $qtyToTransfer,
+            finance_to_float($planningRow['Unit_Cost_LCY'] ?? 0.0)
+        );
+        if (abs($lineUnposted) < 0.000001) {
+            continue;
+        }
+
+        $taskKey = strtolower($taskNo);
+        $unpostedByTask[$taskKey] = finance_add_amount(
+            finance_to_float($unpostedByTask[$taskKey] ?? 0.0),
+            $lineUnposted
+        );
+    }
+
+    return $unpostedByTask;
+}
+
 function finrap_aggregate_detail_task_metrics_for_task_keys(array $detailTaskRows, array $allowedTaskKeys): array
 {
     if ($allowedTaskKeys === []) {
@@ -2851,6 +2970,7 @@ function finrap_aggregate_detail_task_metrics_for_task_keys(array $detailTaskRow
             'Budget_Cost' => 0.0,
             'EAC' => 0.0,
             'Booked_Cost' => 0.0,
+            'Unposted_Cost' => 0.0,
             'Entered_Obligations' => 0.0,
             'Variance_Budget_EAC' => 0.0,
         ];
@@ -2869,6 +2989,7 @@ function finrap_aggregate_detail_task_metrics_for_task_keys(array $detailTaskRow
     $budgetTotal = 0.0;
     $eacTotal = 0.0;
     $bookedTotal = 0.0;
+    $unpostedTotal = 0.0;
     $obligationTotal = 0.0;
     $varianceTotal = 0.0;
 
@@ -2887,6 +3008,7 @@ function finrap_aggregate_detail_task_metrics_for_task_keys(array $detailTaskRow
         $budgetTotal = finance_add_amount($budgetTotal, finance_to_float($taskRow['Budget_Cost'] ?? 0.0));
         $eacTotal = finance_add_amount($eacTotal, finance_to_float($taskRow['EAC'] ?? 0.0));
         $bookedTotal = finance_add_amount($bookedTotal, finance_to_float($taskRow['Booked_Cost'] ?? 0.0));
+        $unpostedTotal = finance_add_amount($unpostedTotal, finance_to_float($taskRow['Unposted_Cost'] ?? 0.0));
         $obligationTotal = finance_add_amount($obligationTotal, finance_to_float($taskRow['Entered_Obligations'] ?? 0.0));
         $varianceTotal = finance_add_amount($varianceTotal, finance_to_float($taskRow['Variance_Budget_EAC'] ?? 0.0));
     }
@@ -2897,6 +3019,7 @@ function finrap_aggregate_detail_task_metrics_for_task_keys(array $detailTaskRow
         'Budget_Cost' => $budgetTotal,
         'EAC' => $eacTotal,
         'Booked_Cost' => $bookedTotal,
+        'Unposted_Cost' => $unpostedTotal,
         'Entered_Obligations' => $obligationTotal,
         'Variance_Budget_EAC' => $varianceTotal,
     ];
@@ -2961,6 +3084,7 @@ function finrap_aggregate_detail_task_metrics_for_change_order(
     $budgetTotal = 0.0;
     $eacTotal = 0.0;
     $bookedTotal = 0.0;
+    $unpostedTotal = 0.0;
     $obligationTotal = 0.0;
     $varianceTotal = 0.0;
 
@@ -2983,6 +3107,7 @@ function finrap_aggregate_detail_task_metrics_for_change_order(
         $budgetTotal = finance_add_amount($budgetTotal, finance_to_float($taskRow['Budget_Cost'] ?? 0.0));
         $eacTotal = finance_add_amount($eacTotal, finance_to_float($taskRow['EAC'] ?? 0.0));
         $bookedTotal = finance_add_amount($bookedTotal, finance_to_float($taskRow['Booked_Cost'] ?? 0.0));
+        $unpostedTotal = finance_add_amount($unpostedTotal, finance_to_float($taskRow['Unposted_Cost'] ?? 0.0));
         $obligationTotal = finance_add_amount($obligationTotal, finance_to_float($taskRow['Entered_Obligations'] ?? 0.0));
         $varianceTotal = finance_add_amount($varianceTotal, finance_to_float($taskRow['Variance_Budget_EAC'] ?? 0.0));
     }
@@ -2992,6 +3117,7 @@ function finrap_aggregate_detail_task_metrics_for_change_order(
         'Budget_Cost' => $budgetTotal,
         'EAC' => $eacTotal,
         'Booked_Cost' => $bookedTotal,
+        'Unposted_Cost' => $unpostedTotal,
         'Entered_Obligations' => $obligationTotal,
         'Variance_Budget_EAC' => $varianceTotal,
     ];
@@ -3515,6 +3641,7 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
             'EAC_Hours' => 0.0,
             'Booked_Hours' => 0.0,
             'Booked_Cost' => 0.0,
+            'Unposted_Cost' => 0.0,
             'Entered_Obligations' => 0.0,
             'Invoiced_Amount' => 0.0,
             'Variance_Budget_EAC' => 0.0,
@@ -3586,6 +3713,52 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
             (float) ($taskRowsByKey[$taskKey]['Booked_Cost'] ?? 0.0),
             finance_to_float($ledgerRow['Total_Cost_LCY'] ?? 0.0)
         );
+    }
+
+    try {
+        $planningUrl = finrap_company_entity_url_with_query($baseUrl, $environment, $company, FINRAP_PLANNING_LINES_ENTITY_SET, [
+            '$select' => 'Job_No,Job_Task_No,No,Qty_to_Transfer_to_Journal,Unit_Cost_LCY',
+            '$filter' => $projectFilter,
+        ]);
+        $planningRows = odata_get_all($planningUrl, $auth, $ttl);
+    } catch (Throwable $ignoredPlanningLoadError) {
+        $planningRows = [];
+    }
+
+    $candidateItemNos = [];
+    foreach ($planningRows as $planningRow) {
+        if (!is_array($planningRow)) {
+            continue;
+        }
+
+        $qtyToTransfer = finance_to_float($planningRow['Qty_to_Transfer_to_Journal'] ?? 0.0);
+        if (abs($qtyToTransfer) < 0.000001) {
+            continue;
+        }
+
+        $itemNo = trim((string) ($planningRow['No'] ?? ''));
+        if ($itemNo === '') {
+            continue;
+        }
+
+        $candidateItemNos[$itemNo] = $itemNo;
+    }
+
+    $standardItemLookup = finrap_fetch_standard_costing_item_lookup(
+        $baseUrl,
+        $environment,
+        $company,
+        $auth,
+        $ttl,
+        array_values($candidateItemNos)
+    );
+    $unpostedCostsByTask = finrap_parse_unposted_costs_by_task($planningRows, $standardItemLookup);
+    foreach ($unpostedCostsByTask as $taskKey => $unpostedCost) {
+        if (!isset($taskRowsByKey[$taskKey])) {
+            continue;
+        }
+
+        $taskRowsByKey[$taskKey]['Unposted_Cost'] = finance_to_float($unpostedCost);
     }
 
     $baselineAmountsByTask = finrap_parse_baseline_amounts_by_task($baselineRows, array_keys($taskRowsByKey));
@@ -3764,6 +3937,7 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
             $eacHoursTotal = 0.0;
             $bookedHoursTotal = 0.0;
             $bookedTotal = 0.0;
+            $unpostedTotal = 0.0;
             $obligationTotal = 0.0;
             $invoicedTotal = 0.0;
             $directContractValue = finance_to_float($taskRow['Contract_Value'] ?? 0.0);
@@ -3787,6 +3961,7 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
                     $eacHoursTotal = finance_add_amount($eacHoursTotal, finance_to_float($bookingRow['EAC_Hours'] ?? 0.0));
                     $bookedHoursTotal = finance_add_amount($bookedHoursTotal, finance_to_float($bookingRow['Booked_Hours'] ?? 0.0));
                     $bookedTotal = finance_add_amount($bookedTotal, finance_to_float($bookingRow['Booked_Cost'] ?? 0.0));
+                    $unpostedTotal = finance_add_amount($unpostedTotal, finance_to_float($bookingRow['Unposted_Cost'] ?? 0.0));
                     $obligationTotal = finance_add_amount($obligationTotal, finance_to_float($bookingRow['Entered_Obligations'] ?? 0.0));
                     $invoicedTotal = finance_add_amount($invoicedTotal, finance_to_float($bookingRow['Invoiced_Amount'] ?? 0.0));
                 }
@@ -3802,6 +3977,7 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
                 $taskRowsByKey[$taskKey]['EAC_Hours'] = $eacHoursTotal;
                 $taskRowsByKey[$taskKey]['Booked_Hours'] = $bookedHoursTotal;
                 $taskRowsByKey[$taskKey]['Booked_Cost'] = $bookedTotal;
+                $taskRowsByKey[$taskKey]['Unposted_Cost'] = $unpostedTotal;
                 $taskRowsByKey[$taskKey]['Entered_Obligations'] = $obligationTotal;
                 $taskRowsByKey[$taskKey]['Invoiced_Amount'] = $invoicedTotal;
             }
@@ -3820,6 +3996,7 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
     $budgetTotal = 0.0;
     $eacTotal = 0.0;
     $bookedTotal = 0.0;
+    $unpostedTotal = 0.0;
     $obligationTotal = 0.0;
     $invoicedTotal = 0.0;
     foreach ($taskRowsByKey as $taskRow) {
@@ -3830,6 +4007,7 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
         $budgetTotal = finance_add_amount($budgetTotal, finance_to_float($taskRow['Budget_Cost'] ?? 0.0));
         $eacTotal = finance_add_amount($eacTotal, finance_to_float($taskRow['EAC'] ?? 0.0));
         $bookedTotal = finance_add_amount($bookedTotal, finance_to_float($taskRow['Booked_Cost'] ?? 0.0));
+        $unpostedTotal = finance_add_amount($unpostedTotal, finance_to_float($taskRow['Unposted_Cost'] ?? 0.0));
         $obligationTotal = finance_add_amount($obligationTotal, finance_to_float($taskRow['Entered_Obligations'] ?? 0.0));
         $invoicedTotal = finance_add_amount($invoicedTotal, finance_to_float($taskRow['Invoiced_Amount'] ?? 0.0));
     }
@@ -3865,6 +4043,7 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
         'EAC_Hours' => $aggregatedTotals['EAC_Hours'],
         'Booked_Hours' => $aggregatedTotals['Booked_Hours'],
         'Booked_Cost' => $aggregatedTotals['Booked_Cost'],
+        'Unposted_Cost' => $aggregatedTotals['Unposted_Cost'],
         'Entered_Obligations' => $aggregatedTotals['Entered_Obligations'],
         'Invoiced_Amount' => $aggregatedTotals['Invoiced_Amount'],
         'Variance_Budget_EAC' => $aggregatedTotals['Variance_Budget_EAC'],
@@ -4033,6 +4212,7 @@ function finrap_aggregate_detail_task_rows(array $taskRows): array
     $eacHoursTotal = 0.0;
     $bookedHoursTotal = 0.0;
     $bookedTotal = 0.0;
+    $unpostedTotal = 0.0;
     $obligationTotal = 0.0;
     $invoicedTotal = 0.0;
 
@@ -4049,6 +4229,7 @@ function finrap_aggregate_detail_task_rows(array $taskRows): array
         $eacHoursTotal = finance_add_amount($eacHoursTotal, finance_to_float($taskRow['EAC_Hours'] ?? 0.0));
         $bookedHoursTotal = finance_add_amount($bookedHoursTotal, finance_to_float($taskRow['Booked_Hours'] ?? 0.0));
         $bookedTotal = finance_add_amount($bookedTotal, finance_to_float($taskRow['Booked_Cost'] ?? 0.0));
+        $unpostedTotal = finance_add_amount($unpostedTotal, finance_to_float($taskRow['Unposted_Cost'] ?? 0.0));
         $obligationTotal = finance_add_amount($obligationTotal, finance_to_float($taskRow['Entered_Obligations'] ?? 0.0));
         $invoicedTotal = finance_add_amount($invoicedTotal, finance_to_float($taskRow['Invoiced_Amount'] ?? 0.0));
     }
@@ -4062,6 +4243,7 @@ function finrap_aggregate_detail_task_rows(array $taskRows): array
         'EAC_Hours' => $eacHoursTotal,
         'Booked_Hours' => $bookedHoursTotal,
         'Booked_Cost' => $bookedTotal,
+        'Unposted_Cost' => $unpostedTotal,
         'Entered_Obligations' => $obligationTotal,
         'Invoiced_Amount' => $invoicedTotal,
         'Variance_Budget_EAC' => finance_calculate_result($budgetTotal, $eacTotal),
@@ -4103,6 +4285,7 @@ function finrap_rollup_total_row_metrics(array &$taskRows): void
         $eacHoursTotal = 0.0;
         $bookedHoursTotal = 0.0;
         $bookedTotal = 0.0;
+        $unpostedTotal = 0.0;
         $obligationTotal = 0.0;
         $invoicedTotal = 0.0;
         $directContractValue = finance_to_float($taskRow['Contract_Value'] ?? 0.0);
@@ -4125,6 +4308,7 @@ function finrap_rollup_total_row_metrics(array &$taskRows): void
             $eacHoursTotal = finance_add_amount($eacHoursTotal, finance_to_float($detailRow['EAC_Hours'] ?? 0.0));
             $bookedHoursTotal = finance_add_amount($bookedHoursTotal, finance_to_float($detailRow['Booked_Hours'] ?? 0.0));
             $bookedTotal = finance_add_amount($bookedTotal, finance_to_float($detailRow['Booked_Cost'] ?? 0.0));
+            $unpostedTotal = finance_add_amount($unpostedTotal, finance_to_float($detailRow['Unposted_Cost'] ?? 0.0));
             $obligationTotal = finance_add_amount($obligationTotal, finance_to_float($detailRow['Entered_Obligations'] ?? 0.0));
             $invoicedTotal = finance_add_amount($invoicedTotal, finance_to_float($detailRow['Invoiced_Amount'] ?? 0.0));
         }
@@ -4140,6 +4324,7 @@ function finrap_rollup_total_row_metrics(array &$taskRows): void
         $taskRow['EAC_Hours'] = $eacHoursTotal;
         $taskRow['Booked_Hours'] = $bookedHoursTotal;
         $taskRow['Booked_Cost'] = $bookedTotal;
+        $taskRow['Unposted_Cost'] = $unpostedTotal;
         $taskRow['Entered_Obligations'] = $obligationTotal;
         $taskRow['Invoiced_Amount'] = $invoicedTotal;
     }
@@ -4188,6 +4373,10 @@ function finrap_normalize_loaded_task_row_fields(array $taskRows): array
 
         if (!array_key_exists('Booked_Hours', $taskRow)) {
             $taskRow['Booked_Hours'] = 0.0;
+        }
+
+        if (!array_key_exists('Unposted_Cost', $taskRow)) {
+            $taskRow['Unposted_Cost'] = 0.0;
         }
 
         if (!array_key_exists('Job_Change_Order_No', $taskRow)) {
