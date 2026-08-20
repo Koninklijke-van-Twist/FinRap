@@ -3192,6 +3192,7 @@ function finrap_build_single_header_metric_row(
         'eac_cost' => $eacCost,
         'eac_gross_profit' => $eacGrossProfit,
         'booked_cost' => finance_to_float($taskMetrics['Booked_Cost'] ?? 0.0),
+        'unposted_cost' => finance_to_float($taskMetrics['Unposted_Cost'] ?? 0.0),
         'entered_obligations' => finance_to_float($taskMetrics['Entered_Obligations'] ?? 0.0),
         'order_result' => $grossProfit + $variance,
         'installments_invoiced' => $installmentsInvoiced,
