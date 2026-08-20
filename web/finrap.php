@@ -263,7 +263,23 @@ function finrap_currency_sign_class(float $value, bool $invertForCost = false): 
 
 function finrap_is_cost_metric_column(string $columnKey): bool
 {
-    return in_array($columnKey, ['Budget_Cost', 'EAC', 'Booked_Cost', 'Unposted_Cost'], true);
+    return in_array($columnKey, ['Budget_Cost', 'EAC', 'Booked_Cost', 'Unposted_Cost', 'Entered_Obligations'], true);
+}
+
+function finrap_rows_have_non_zero_amount(array $rows, string $fieldName): bool
+{
+    $epsilon = 0.000001;
+    foreach ($rows as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+
+        if (abs(finance_to_float($row[$fieldName] ?? 0.0)) >= $epsilon) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 function finrap_month_label(string $yearMonth): string
@@ -297,9 +313,9 @@ function finrap_format_report_datetime(string $rawDateTime): string
     return $dt->format('j') . ' ' . $monthLabel . ' ' . $dt->format('Y, H:i');
 }
 
-function finrap_cost_group_columns(): array
+function finrap_cost_group_columns(bool $includeUnpostedCost = true): array
 {
-    return [
+    $columns = [
         ['key' => 'Cost_Group_Code', 'label' => LOC('report.col.cost_group_code'), 'is_right' => false, 'tooltip' => ''],
         ['key' => 'Cost_Group_Description', 'label' => LOC('report.col.cost_group_description'), 'is_right' => false, 'tooltip' => ''],
         ['key' => 'Budget_Hours', 'label' => LOC('report.col.budget_hours'), 'is_right' => true, 'tooltip' => LOC('report.tooltip.col.budget_hours')],
@@ -308,10 +324,16 @@ function finrap_cost_group_columns(): array
         ['key' => 'Budget_Cost', 'label' => LOC('report.col.budget_cost'), 'is_right' => true, 'tooltip' => LOC('report.tooltip.col.budget_cost')],
         ['key' => 'EAC', 'label' => LOC('report.col.eac'), 'is_right' => true, 'tooltip' => LOC('report.tooltip.col.eac')],
         ['key' => 'Booked_Cost', 'label' => LOC('report.col.booked_cost'), 'is_right' => true, 'tooltip' => LOC('report.tooltip.col.booked_cost')],
-        ['key' => 'Unposted_Cost', 'label' => LOC('report.col.unposted_cost'), 'is_right' => true, 'tooltip' => LOC('report.tooltip.col.unposted_cost')],
-        ['key' => 'Entered_Obligations', 'label' => LOC('report.col.entered_obligations'), 'is_right' => true, 'tooltip' => LOC('report.tooltip.col.entered_obligations')],
-        ['key' => 'Variance_Budget_EAC', 'label' => LOC('report.col.variance_budget_eac'), 'is_right' => true, 'tooltip' => LOC('report.tooltip.col.variance_budget_eac')],
     ];
+
+    if ($includeUnpostedCost) {
+        $columns[] = ['key' => 'Unposted_Cost', 'label' => LOC('report.col.unposted_cost'), 'is_right' => true, 'tooltip' => LOC('report.tooltip.col.unposted_cost')];
+    }
+
+    $columns[] = ['key' => 'Entered_Obligations', 'label' => LOC('report.col.entered_obligations'), 'is_right' => true, 'tooltip' => LOC('report.tooltip.col.entered_obligations')];
+    $columns[] = ['key' => 'Variance_Budget_EAC', 'label' => LOC('report.col.variance_budget_eac'), 'is_right' => true, 'tooltip' => LOC('report.tooltip.col.variance_budget_eac')];
+
+    return $columns;
 }
 
 function finrap_task_row_has_non_zero_metrics(array $row): bool
@@ -378,7 +400,8 @@ function finrap_is_all_zero_totals_row(array $row, array $allTaskRows = []): boo
 
 function finrap_render_cost_group_table(array $taskRows, bool $totalsOnly = false, bool $hideAllZeroTotals = false, string $tableId = ''): void
 {
-    $columns = finrap_cost_group_columns();
+    $includeUnpostedCost = finrap_rows_have_non_zero_amount($taskRows, 'Unposted_Cost');
+    $columns = finrap_cost_group_columns($includeUnpostedCost);
     $tableIdAttr = $tableId !== '' ? ' id="' . htmlspecialchars($tableId) . '"' : '';
 
     echo '<table class="project-cost-group-table"' . $tableIdAttr . '>';
@@ -576,6 +599,8 @@ $headerMetricRows = is_array($modal['header_metric_rows'] ?? null) ? $modal['hea
 ]];
 $showHeaderTypeColumn = finrap_header_table_has_change_orders($headerMetricRows);
 $showHeaderBudgetRevenueColumn = finrap_header_shows_budget_revenue_column($headerMetricRows);
+$showHeaderUnpostedCostColumn = finrap_rows_have_non_zero_amount($headerMetricRows, 'unposted_cost')
+    || finrap_rows_have_non_zero_amount($taskRows, 'Unposted_Cost');
 $taskRowsTotal = is_array($modal['task_rows_total'] ?? null) ? $modal['task_rows_total'] : [];
 $summaryTotals = finrap_get_report_summary_totals($taskRows);
 $budgetCostTotal = (float) ($summaryTotals['Budget_Cost'] ?? 0.0);
@@ -1957,6 +1982,9 @@ $finrapReportId = $reportId;
                                     <th class="is-right" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.eac_gross_profit'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.eac_gross_profit'), ENT_QUOTES) ?>
                                     </th>
                                     <th class="is-right" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.col.booked_cost'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.col.booked_cost'), ENT_QUOTES) ?></th>
+                                    <?php if ($showHeaderUnpostedCostColumn): ?>
+                                    <th class="is-right" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.col.unposted_cost'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.col.unposted_cost'), ENT_QUOTES) ?></th>
+                                    <?php endif; ?>
                                     <th class="is-right" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.installments_invoiced'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.installments_invoiced'), ENT_QUOTES) ?>
                                     </th>
                                     <th class="is-right" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.installments_received'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.installments_received'), ENT_QUOTES) ?>
@@ -1983,6 +2011,7 @@ $finrapReportId = $reportId;
                                             ?? ($isProjectHeaderRow ? ($contractValue - $eacTotal) : ($headerContractValue - $headerEacCost))
                                     );
                                     $headerBookedCost = finance_to_float($headerMetricRow['booked_cost'] ?? ($isProjectHeaderRow ? $bookedCostTotal : 0.0));
+                                    $headerUnpostedCost = finance_to_float($headerMetricRow['unposted_cost'] ?? ($isProjectHeaderRow ? $unpostedCostTotal : 0.0));
                                     $headerInstallmentsInvoiced = finance_to_float($headerMetricRow['installments_invoiced'] ?? ($isProjectHeaderRow ? $installmentsInvoiced : 0.0));
                                     $headerInstallmentsReceived = array_key_exists('installments_received', $headerMetricRow)
                                         ? finance_to_float($headerMetricRow['installments_received'])
@@ -2012,6 +2041,11 @@ $finrapReportId = $reportId;
                                     <td class="is-right <?= finrap_currency_sign_class($headerBookedCost, true) ?>"<?= $isProjectHeaderRow ? ' id="metricBookedCost"' : '' ?>>
                                         <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($headerBookedCost)), finrap_cost_group_value_tooltip_html('Booked_Cost')) ?>
                                     </td>
+                                    <?php if ($showHeaderUnpostedCostColumn): ?>
+                                    <td class="is-right <?= finrap_currency_sign_class($headerUnpostedCost, true) ?>"<?= $isProjectHeaderRow ? ' id="metricUnpostedCost"' : '' ?>>
+                                        <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($headerUnpostedCost)), finrap_cost_group_value_tooltip_html('Unposted_Cost')) ?>
+                                    </td>
+                                    <?php endif; ?>
                                     <td class="is-right <?= finrap_currency_sign_class($headerInstallmentsInvoiced) ?>">
                                         <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($headerInstallmentsInvoiced)), $tooltipInstallmentsInvoiced) ?>
                                     </td>
@@ -2373,7 +2407,8 @@ $finrapReportId = $reportId;
                     return metricKey === 'Budget_Cost'
                         || metricKey === 'EAC'
                         || metricKey === 'Booked_Cost'
-                        || metricKey === 'Unposted_Cost';
+                        || metricKey === 'Unposted_Cost'
+                        || metricKey === 'Entered_Obligations';
                 }
 
                 function taskNoToNumeric (value)
@@ -2740,6 +2775,7 @@ $finrapReportId = $reportId;
                     updateMetricCell('metricGrossProfit', grossProfit);
                     updateMetricCell('metricEacGrossProfit', eacGrossProfit);
                     updateMetricCell('metricBookedCost', bookedCost, true);
+                    updateMetricCell('metricUnpostedCost', unpostedCost, true);
                     updateMetricCell('metricOrderResult', orderResult);
                     updateAnalyticsValue('metricExpVariance', expVariance, formatCurrency);
                     updateAnalyticsValue('pocBaselineValue', pocBaseline, formatPercent);
