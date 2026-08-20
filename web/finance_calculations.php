@@ -257,3 +257,20 @@ function finance_workorder_total_revenue(array $workorder): float
 {
     return finance_abs_amount($workorder['KVT_Sum_Work_Order_Revenue'] ?? 0);
 }
+
+/**
+ * Berekent ongeboekte kosten voor één projectplanningsregel:
+ * Qty_to_Transfer_to_Journal × Unit_Cost_LCY.
+ */
+function finance_column_unposted_cost_line(float $qtyToTransferToJournal, float $unitCostLcy): float
+{
+    return finance_to_float($qtyToTransferToJournal) * finance_to_float($unitCostLcy);
+}
+
+/**
+ * Berekent de POC-kostenteller als geboekte kosten plus ongeboekte kosten.
+ */
+function finance_column_poc_cost_progress(float $bookedCost, float $unpostedCost): float
+{
+    return finance_add_amount($bookedCost, $unpostedCost);
+}
