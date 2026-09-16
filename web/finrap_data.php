@@ -19,8 +19,11 @@ const FINRAP_BUDGET_HOURS_FIELD = 'Quantity';
 const FINRAP_BUDGET_HOURS_FILTER_BASELINE_FIELD = 'Baseline_Version_in_Filter';
 const FINRAP_BUDGET_COST_FIELD = 'Total_Cost';
 const FINRAP_BUDGET_REVENUE_FIELD = 'Total_Price_LCY';
-const FINRAP_BUDGET_REVENUE_TYPE = 'GB-rekening';
-const FINRAP_BUDGET_REVENUE_NO = '800000';
+const FINRAP_BUDGET_REVENUE_TYPE = FINANCE_REVENUE_GL_ACCOUNT_TYPE;
+const FINRAP_BUDGET_REVENUE_NO = FINANCE_REVENUE_GL_ACCOUNT_NO;
+const FINRAP_BILLABLE_PLANNING_LINES_ENTITY_SET = 'FactureerbareProjectPlanningsRegels';
+const FINRAP_BILLABLE_PLANNING_AMOUNT_FIELD = 'Line_Amount_LCY';
+const FINRAP_BILLABLE_PLANNING_INVOICED_FIELD = 'Invoiced_Amount_LCY';
 const FINRAP_PROJECT_TASK_ENTITY_SET = 'ProjectTaken';
 const FINRAP_PROJECT_TASK_ENTITY_SET_FALLBACK = 'ProjectenJobTaskLines';
 const FINRAP_PROJECT_TASK_CONTRACT_FIELD = 'LVS_Contract_Total_Price_2';
@@ -2332,15 +2335,105 @@ function finrap_fetch_budget_hours_total(
 
 function finrap_baseline_row_counts_as_budget_revenue(array $baselineRow): bool
 {
-    if (trim(FINRAP_BUDGET_REVENUE_TYPE) === '' || trim(FINRAP_BUDGET_REVENUE_NO) === '') {
+    return finance_is_revenue_gl_account_line($baselineRow);
+}
+
+function finrap_planning_row_is_billable_line_type(array $planningRow): bool
+{
+    $lineType = strtolower(trim((string) ($planningRow['Line_Type'] ?? '')));
+    $isFactureerbaar = str_contains($lineType, 'factureer');
+    $isForecast = str_contains($lineType, 'prognose') || str_contains($lineType, 'forecast');
+
+    return $isFactureerbaar && !$isForecast;
+}
+
+function finrap_planning_row_counts_as_contract_revenue(array $planningRow): bool
+{
+    if (!finance_is_revenue_gl_account_line($planningRow)) {
         return false;
     }
 
-    $type = trim((string) ($baselineRow['Type'] ?? ''));
-    $no = trim((string) ($baselineRow['No'] ?? ''));
+    $lineType = strtolower(trim((string) ($planningRow['Line_Type'] ?? '')));
+    $isForecast = str_contains($lineType, 'prognose') || str_contains($lineType, 'forecast');
 
-    return strcasecmp($type, FINRAP_BUDGET_REVENUE_TYPE) === 0
-        && $no === FINRAP_BUDGET_REVENUE_NO;
+    return !$isForecast;
+}
+
+function finrap_filter_gl_revenue_planning_rows(array $planningRows): array
+{
+    $filtered = [];
+    foreach ($planningRows as $planningRow) {
+        if (!is_array($planningRow)) {
+            continue;
+        }
+
+        if (!finrap_planning_row_counts_as_contract_revenue($planningRow)) {
+            continue;
+        }
+
+        $filtered[] = $planningRow;
+    }
+
+    return $filtered;
+}
+
+function finrap_planning_row_change_order_group(array $planningRow, array $changeOrderByTask): string
+{
+    $lineChangeOrder = trim((string) ($planningRow[FINRAP_PROJECT_TASK_CHANGE_ORDER_FIELD] ?? ''));
+    if ($lineChangeOrder !== '') {
+        return $lineChangeOrder;
+    }
+
+    $taskKey = strtolower(trim((string) ($planningRow['Job_Task_No'] ?? '')));
+    if ($taskKey === '') {
+        return '';
+    }
+
+    return trim((string) ($changeOrderByTask[$taskKey] ?? ''));
+}
+
+function finrap_parse_gl_revenue_planning_totals(array $planningRows, array $changeOrderByTask): array
+{
+    $contractByGroup = ['' => 0.0];
+    $invoicedByGroup = ['' => 0.0];
+    $contractByTask = [];
+
+    foreach ($planningRows as $planningRow) {
+        if (!is_array($planningRow) || !finrap_planning_row_counts_as_contract_revenue($planningRow)) {
+            continue;
+        }
+
+        $group = finrap_planning_row_change_order_group($planningRow, $changeOrderByTask);
+        $contractAmount = finance_to_float($planningRow[FINRAP_BILLABLE_PLANNING_AMOUNT_FIELD] ?? 0.0);
+        $invoicedAmount = finance_to_float($planningRow[FINRAP_BILLABLE_PLANNING_INVOICED_FIELD] ?? 0.0);
+
+        $contractByGroup[$group] = finance_add_amount((float) ($contractByGroup[$group] ?? 0.0), $contractAmount);
+        $invoicedByGroup[$group] = finance_add_amount((float) ($invoicedByGroup[$group] ?? 0.0), $invoicedAmount);
+
+        $taskNo = trim((string) ($planningRow['Job_Task_No'] ?? ''));
+        if ($taskNo === '') {
+            continue;
+        }
+
+        $taskKey = strtolower($taskNo);
+        $contractByTask[$taskKey] = finance_add_amount((float) ($contractByTask[$taskKey] ?? 0.0), $contractAmount);
+    }
+
+    $changeOrders = $contractByGroup;
+    unset($changeOrders['']);
+    if ($changeOrders !== []) {
+        uksort($changeOrders, static function (string $left, string $right): int {
+            return strnatcasecmp($left, $right);
+        });
+    }
+
+    return [
+        'project_contract' => (float) ($contractByGroup[''] ?? 0.0),
+        'change_orders' => $changeOrders,
+        'contract_by_group' => $contractByGroup,
+        'invoiced_by_group' => $invoicedByGroup,
+        'contract_by_task' => $contractByTask,
+    ];
 }
 
 function finrap_fetch_filtered_baseline_rows(
@@ -3132,23 +3225,38 @@ function finrap_build_single_header_metric_row(
     array $detailTaskRows,
     array $changeOrderByTask,
     string $projectNo,
-    float $installmentsReceived
+    float $installmentsReceived,
+    array $planningTotals = []
 ): array {
+    $groupKey = ($isProjectRow && $groupChangeOrder === '') ? '' : $groupChangeOrder;
+    $contractByGroup = is_array($planningTotals['contract_by_group'] ?? null)
+        ? $planningTotals['contract_by_group']
+        : [];
+    $invoicedByGroup = is_array($planningTotals['invoiced_by_group'] ?? null)
+        ? $planningTotals['invoiced_by_group']
+        : [];
+    $hasPlanningContractTotals = $contractByGroup !== [] || $invoicedByGroup !== [];
+
     if ($isProjectRow && $groupChangeOrder === '') {
         $prjTaskKeys = finrap_collect_prj_header_task_keys($allTaskRows, $changeOrderByTask);
-        $contractValue = finrap_sum_project_task_amount_for_task_keys(
-            $projectTaskRows,
-            $projectNo,
-            FINRAP_PROJECT_TASK_CONTRACT_FIELD,
-            $prjTaskKeys,
-            true
-        );
-        $installmentsInvoiced = finrap_sum_project_task_amount_for_task_keys(
-            $projectTaskRows,
-            $projectNo,
-            FINRAP_PROJECT_TASK_INVOICED_PRICE_FIELD,
-            $prjTaskKeys
-        );
+        if ($hasPlanningContractTotals) {
+            $contractValue = finance_to_float($contractByGroup[$groupKey] ?? 0.0);
+            $installmentsInvoiced = finance_to_float($invoicedByGroup[$groupKey] ?? 0.0);
+        } else {
+            $contractValue = finrap_sum_project_task_amount_for_task_keys(
+                $projectTaskRows,
+                $projectNo,
+                FINRAP_PROJECT_TASK_CONTRACT_FIELD,
+                $prjTaskKeys,
+                true
+            );
+            $installmentsInvoiced = finrap_sum_project_task_amount_for_task_keys(
+                $projectTaskRows,
+                $projectNo,
+                FINRAP_PROJECT_TASK_INVOICED_PRICE_FIELD,
+                $prjTaskKeys
+            );
+        }
         // Zelfde scope als contractwaarde: detailregels zonder meerwerk/suborder.
         // Niet de root-totaalregel gebruiken; die rollt suborders mee.
         $taskMetrics = finrap_aggregate_detail_task_metrics_for_task_keys(
@@ -3156,19 +3264,24 @@ function finrap_build_single_header_metric_row(
             $prjTaskKeys
         );
     } else {
-        $contractValue = finrap_sum_project_task_amount_for_change_order_group(
-            $projectTaskRows,
-            $projectNo,
-            FINRAP_PROJECT_TASK_CONTRACT_FIELD,
-            $groupChangeOrder,
-            true
-        );
-        $installmentsInvoiced = finrap_sum_project_task_amount_for_change_order_group(
-            $projectTaskRows,
-            $projectNo,
-            FINRAP_PROJECT_TASK_INVOICED_PRICE_FIELD,
-            $groupChangeOrder
-        );
+        if ($hasPlanningContractTotals) {
+            $contractValue = finance_to_float($contractByGroup[$groupKey] ?? 0.0);
+            $installmentsInvoiced = finance_to_float($invoicedByGroup[$groupKey] ?? 0.0);
+        } else {
+            $contractValue = finrap_sum_project_task_amount_for_change_order_group(
+                $projectTaskRows,
+                $projectNo,
+                FINRAP_PROJECT_TASK_CONTRACT_FIELD,
+                $groupChangeOrder,
+                true
+            );
+            $installmentsInvoiced = finrap_sum_project_task_amount_for_change_order_group(
+                $projectTaskRows,
+                $projectNo,
+                FINRAP_PROJECT_TASK_INVOICED_PRICE_FIELD,
+                $groupChangeOrder
+            );
+        }
         $taskMetrics = finrap_aggregate_detail_task_metrics_for_change_order(
             $detailTaskRows,
             $changeOrderByTask,
@@ -3307,7 +3420,8 @@ function finrap_build_header_metric_rows(
     array $taskRows,
     string $projectNo,
     array $contractGroups,
-    float $installmentsReceived
+    float $installmentsReceived,
+    array $planningTotals = []
 ): array {
     $changeOrderByTask = finrap_parse_project_task_change_orders_by_task($projectTaskRows, $projectNo);
     $detailTaskRows = array_values(array_filter($taskRows, static function ($taskRow): bool {
@@ -3324,7 +3438,8 @@ function finrap_build_header_metric_rows(
             $detailTaskRows,
             $changeOrderByTask,
             $projectNo,
-            $installmentsReceived
+            $installmentsReceived,
+            $planningTotals
         ),
     ];
 
@@ -3346,7 +3461,8 @@ function finrap_build_header_metric_rows(
             $detailTaskRows,
             $changeOrderByTask,
             $projectNo,
-            0.0
+            0.0,
+            $planningTotals
         );
     }
 
@@ -3531,36 +3647,50 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
 
     $baselineRows = finrap_fetch_filtered_baseline_rows($baseUrl, $environment, $company, $auth, $projectFilter, $ttl);
     $projectTaskRows = finrap_fetch_project_task_rows($baseUrl, $environment, $company, $auth, $projectFilter, $ttl);
-    $contractGroups = finrap_fetch_project_task_contract_groups(
-        $baseUrl,
-        $environment,
-        $company,
-        $auth,
-        $projectFilter,
-        $ttl,
-        $projectTaskRows
-    );
+    $changeOrderByTask = finrap_parse_project_task_change_orders_by_task($projectTaskRows, $projectNo);
+
+    $escapedRevenueType = str_replace("'", "''", FINRAP_BUDGET_REVENUE_TYPE);
+    $escapedRevenueNo = str_replace("'", "''", FINRAP_BUDGET_REVENUE_NO);
+    $billablePlanningSelect = 'Job_No,Line_No,Line_Type,Job_Task_No,Type,No,Description,Document_No,'
+        . FINRAP_BILLABLE_PLANNING_AMOUNT_FIELD
+        . ',Qty_Invoiced,Planning_Date,'
+        . FINRAP_BILLABLE_PLANNING_INVOICED_FIELD
+        . ',LVS_Document_Status,'
+        . FINRAP_PROJECT_TASK_CHANGE_ORDER_FIELD;
+    $billablePlanningFilter = $projectFilter
+        . " and Type eq '" . $escapedRevenueType . "'"
+        . " and No eq '" . $escapedRevenueNo . "'";
 
     try {
-        $contractUrl = finrap_company_entity_url_with_query($baseUrl, $environment, $company, 'FactureerbareProjectPlanningsRegels', [
-            '$select' => 'Job_No,Line_No,Line_Type,Job_Task_No,Description,Document_No,Line_Amount_LCY,Qty_Invoiced,Planning_Date,Invoiced_Amount_LCY,LVS_Document_Status,' . FINRAP_PROJECT_TASK_CHANGE_ORDER_FIELD,
-            '$filter' => $projectFilter,
+        $contractUrl = finrap_company_entity_url_with_query($baseUrl, $environment, $company, FINRAP_BILLABLE_PLANNING_LINES_ENTITY_SET, [
+            '$select' => $billablePlanningSelect,
+            '$filter' => $billablePlanningFilter,
         ]);
         $contractRows = odata_get_all($contractUrl, $auth, $ttl);
-    } catch (Throwable $ignoredContractLoadError) {
-        $contractRows = [];
+    } catch (Throwable $ignoredFilteredContractLoadError) {
+        try {
+            $contractUrl = finrap_company_entity_url_with_query($baseUrl, $environment, $company, FINRAP_BILLABLE_PLANNING_LINES_ENTITY_SET, [
+                '$select' => $billablePlanningSelect,
+                '$filter' => $projectFilter,
+            ]);
+            $contractRows = odata_get_all($contractUrl, $auth, $ttl);
+        } catch (Throwable $ignoredContractLoadError) {
+            $contractRows = [];
+        }
     }
+
+    $contractRows = finrap_filter_gl_revenue_planning_rows($contractRows);
+    $planningTotals = finrap_parse_gl_revenue_planning_totals($contractRows, $changeOrderByTask);
+    $contractGroups = [
+        'project_contract' => (float) ($planningTotals['project_contract'] ?? 0.0),
+        'change_orders' => is_array($planningTotals['change_orders'] ?? null)
+            ? $planningTotals['change_orders']
+            : [],
+    ];
 
     $termijnLines = [];
     foreach ($contractRows as $contractRow) {
-        if (!is_array($contractRow)) {
-            continue;
-        }
-
-        $lineType = strtolower(trim((string) ($contractRow['Line_Type'] ?? '')));
-        $isFactureerbaar = str_contains($lineType, 'factureer');
-        $isForecast = str_contains($lineType, 'prognose') || str_contains($lineType, 'forecast');
-        if (!$isFactureerbaar || $isForecast) {
+        if (!is_array($contractRow) || !finrap_planning_row_is_billable_line_type($contractRow)) {
             continue;
         }
 
@@ -3569,9 +3699,9 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
             'document_no' => trim((string) ($contractRow['Document_No'] ?? '')),
             'description' => trim((string) ($contractRow['Description'] ?? '')),
             'change_order_no' => trim((string) ($contractRow[FINRAP_PROJECT_TASK_CHANGE_ORDER_FIELD] ?? '')),
-            'amount' => finance_to_float($contractRow['Line_Amount_LCY'] ?? 0.0),
+            'amount' => finance_to_float($contractRow[FINRAP_BILLABLE_PLANNING_AMOUNT_FIELD] ?? 0.0),
             'planning_date' => (string) ($contractRow['Planning_Date'] ?? ''),
-            'invoiced_amount' => finance_to_float($contractRow['Invoiced_Amount_LCY'] ?? 0.0),
+            'invoiced_amount' => finance_to_float($contractRow[FINRAP_BILLABLE_PLANNING_INVOICED_FIELD] ?? 0.0),
         ];
     }
 
@@ -3677,7 +3807,7 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
             continue;
         }
 
-        $lineAmount = finance_to_float($contractRow['Line_Amount_LCY'] ?? 0.0);
+        $lineAmount = finance_to_float($contractRow[FINRAP_BILLABLE_PLANNING_AMOUNT_FIELD] ?? 0.0);
         $qtyInvoiced = finance_to_float($contractRow['Qty_Invoiced'] ?? 0.0);
         $taskRowsByKey[$taskKey]['Invoiced_Amount'] = finance_add_amount(
             (float) ($taskRowsByKey[$taskKey]['Invoiced_Amount'] ?? 0.0),
@@ -3784,11 +3914,9 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
         $projectNo,
         FINRAP_PROJECT_TASK_PURCHASES_FIELD
     );
-    $contractByTask = finrap_parse_project_task_contract_by_task(
-        $projectTaskRows,
-        array_keys($taskRowsByKey),
-        $projectNo
-    );
+    $contractByTask = is_array($planningTotals['contract_by_task'] ?? null)
+        ? $planningTotals['contract_by_task']
+        : [];
     $baselineRevenueByTask = is_array($baselineAmountsByTask['revenue'] ?? null) ? $baselineAmountsByTask['revenue'] : [];
     foreach ($taskRowsByKey as $taskKey => &$taskRow) {
         if (!is_array($taskRow)) {
@@ -4056,7 +4184,8 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
         $displayTaskRows,
         $projectNo,
         $contractGroups,
-        finance_to_float($modal['installments_received'] ?? 0.0)
+        finance_to_float($modal['installments_received'] ?? 0.0),
+        $planningTotals
     );
     $prjHeaderRow = is_array($modal['header_metric_rows'][0] ?? null) ? $modal['header_metric_rows'][0] : [];
     $modal['contract_value'] = finance_to_float($prjHeaderRow['contract_value'] ?? 0.0);

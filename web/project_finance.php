@@ -106,6 +106,10 @@ class ProjectFinanceService
                 'entity_set' => 'JobBaselineLines',
                 'project_key_field' => 'Job_No',
                 'line_type_field' => 'Line_Type',
+                'revenue_type_field' => 'Type',
+                'revenue_no_field' => 'No',
+                'revenue_type' => FINANCE_REVENUE_GL_ACCOUNT_TYPE,
+                'revenue_no' => FINANCE_REVENUE_GL_ACCOUNT_NO,
                 'revenue_fields' => [
                     'Line_Amount',
                 ],
@@ -558,6 +562,8 @@ class ProjectFinanceService
 
     /**
      * Haalt verwachte omzet/kosten op uit de voorcalculatiebron per project.
+     * Verwachte omzet telt alleen JobBaselineLines met Type = GB-rekening en No = 800000.
+     * Verwachte kosten blijven de som van alle voorcalculatieregels.
      */
     public function collectProjectForecastForProjects(array $projectNumbers, int $ttl = 3600): array
     {
@@ -644,7 +650,10 @@ class ProjectFinanceService
 
                 $lineType = trim((string) ($row[$lineTypeField] ?? ''));
 
-                $revenueAmount = self::firstNumericValue($row, $revenueFields);
+                $revenueAmount = 0.0;
+                if (finance_is_revenue_gl_account_line($row)) {
+                    $revenueAmount = self::firstNumericValue($row, $revenueFields);
+                }
                 $costAmount = self::firstNumericValue($row, $costFields);
 
                 $lineDescription = trim((string) ($row['Description'] ?? ''));
