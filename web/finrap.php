@@ -227,10 +227,10 @@ function finrap_cost_group_value_tooltip_html(string $columnKey): string
 
     if ($columnKey === 'Invoiced_Amount') {
         return finrap_tooltip_formula_html([
-            ['type' => 'ref', 'table' => 'FactureerbareProjectPlanningsRegels', 'field' => 'Line_Amount_LCY'],
+            ['type' => 'ref', 'table' => FINRAP_BILLABLE_PLANNING_LINES_ENTITY_SET, 'field' => FINRAP_BILLABLE_PLANNING_AMOUNT_FIELD],
             ['type' => 'text', 'text' => ' × '],
-            ['type' => 'ref', 'table' => 'FactureerbareProjectPlanningsRegels', 'field' => 'Qty_Invoiced'],
-            ['type' => 'text', 'text' => ' (Job_Task_No)'],
+            ['type' => 'ref', 'table' => FINRAP_BILLABLE_PLANNING_LINES_ENTITY_SET, 'field' => 'Qty_Invoiced'],
+            ['type' => 'text', 'text' => ' (Type = ' . FINRAP_BUDGET_REVENUE_TYPE . ', No = ' . FINRAP_BUDGET_REVENUE_NO . ')'],
         ]);
     }
 
@@ -658,20 +658,20 @@ $tooltipHoursToGo = finrap_tooltip_formula_html([
 ]);
 $tooltipGrossProfitPct = finrap_tooltip_formula_html([
     ['type' => 'text', 'text' => '('],
-    ['type' => 'ref', 'table' => 'FactureerbareProjectPlanningsRegels', 'field' => 'Line_Amount_LCY'],
+    ['type' => 'ref', 'table' => FINRAP_BILLABLE_PLANNING_LINES_ENTITY_SET, 'field' => FINRAP_BILLABLE_PLANNING_AMOUNT_FIELD],
     ['type' => 'text', 'text' => ' - '],
     ['type' => 'ref', 'table' => 'ProjectFinanceForecast', 'field' => 'expected_costs'],
     ['type' => 'text', 'text' => ') / '],
-    ['type' => 'ref', 'table' => 'FactureerbareProjectPlanningsRegels', 'field' => 'Line_Amount_LCY'],
+    ['type' => 'ref', 'table' => FINRAP_BILLABLE_PLANNING_LINES_ENTITY_SET, 'field' => FINRAP_BILLABLE_PLANNING_AMOUNT_FIELD],
 ]);
 $tooltipOrderResultPct = finrap_tooltip_formula_html([
     ['type' => 'text', 'text' => '(GrossProfit + Variance) / '],
-    ['type' => 'ref', 'table' => 'FactureerbareProjectPlanningsRegels', 'field' => 'Line_Amount_LCY'],
+    ['type' => 'ref', 'table' => FINRAP_BILLABLE_PLANNING_LINES_ENTITY_SET, 'field' => FINRAP_BILLABLE_PLANNING_AMOUNT_FIELD],
 ]);
 $tooltipVariancePct = finrap_tooltip_formula_html([
     ['type' => 'ref', 'table' => FINRAP_PROJECT_TASK_ENTITY_SET, 'field' => FINRAP_PROJECT_TASK_BASELINE_COST_FIELD],
     ['type' => 'text', 'text' => ' / '],
-    ['type' => 'ref', 'table' => FINRAP_PROJECT_TASK_ENTITY_SET, 'field' => FINRAP_PROJECT_TASK_CONTRACT_FIELD],
+    ['type' => 'ref', 'table' => FINRAP_BILLABLE_PLANNING_LINES_ENTITY_SET, 'field' => FINRAP_BILLABLE_PLANNING_AMOUNT_FIELD],
 ]);
 $tooltipExpVariance = finrap_tooltip_formula_html([
     ['type' => 'text', 'text' => LOC('report.col.budget_cost')],
@@ -762,22 +762,23 @@ $tooltipSalesManager = finrap_tooltip_formula_html([
     ['type' => 'ref', 'table' => 'Projecten', 'field' => 'KVT_Sales_Person_Code'],
 ]);
 $tooltipContractValue = finrap_tooltip_formula_html([
-    ['type' => 'ref', 'table' => FINRAP_PROJECT_TASK_ENTITY_SET, 'field' => FINRAP_PROJECT_TASK_CONTRACT_FIELD],
+    ['type' => 'ref', 'table' => FINRAP_BILLABLE_PLANNING_LINES_ENTITY_SET, 'field' => FINRAP_BILLABLE_PLANNING_AMOUNT_FIELD],
+    ['type' => 'text', 'text' => ' (Type = ' . FINRAP_BUDGET_REVENUE_TYPE . ', No = ' . FINRAP_BUDGET_REVENUE_NO . ')' . finrap_tooltip_vat_suffix('excl')],
 ]);
 $tooltipChangeOrderContractValue = finrap_tooltip_formula_html([
-    ['type' => 'ref', 'table' => FINRAP_PROJECT_TASK_ENTITY_SET, 'field' => FINRAP_PROJECT_TASK_CONTRACT_FIELD],
-    ['type' => 'text', 'text' => ' (' . LOC('report.tooltip.header.change_order_contract') . ')'],
+    ['type' => 'ref', 'table' => FINRAP_BILLABLE_PLANNING_LINES_ENTITY_SET, 'field' => FINRAP_BILLABLE_PLANNING_AMOUNT_FIELD],
+    ['type' => 'text', 'text' => ' (Type = ' . FINRAP_BUDGET_REVENUE_TYPE . ', No = ' . FINRAP_BUDGET_REVENUE_NO . ', ' . LOC('report.tooltip.header.change_order_contract') . ')' . finrap_tooltip_vat_suffix('excl')],
 ]);
 $tooltipTotalDirectCost = finrap_tooltip_formula_html([
     ['type' => 'ref', 'table' => FINRAP_PROJECT_TASK_ENTITY_SET, 'field' => FINRAP_PROJECT_TASK_BASELINE_COST_FIELD],
 ]);
 $tooltipGrossProfit = finrap_tooltip_formula_html([
-    ['type' => 'ref', 'table' => FINRAP_PROJECT_TASK_ENTITY_SET, 'field' => FINRAP_PROJECT_TASK_CONTRACT_FIELD],
+    ['type' => 'ref', 'table' => FINRAP_BILLABLE_PLANNING_LINES_ENTITY_SET, 'field' => FINRAP_BILLABLE_PLANNING_AMOUNT_FIELD],
     ['type' => 'text', 'text' => ' - '],
     ['type' => 'ref', 'table' => FINRAP_PROJECT_TASK_ENTITY_SET, 'field' => FINRAP_PROJECT_TASK_BASELINE_COST_FIELD],
 ]);
 $tooltipEacGrossProfit = finrap_tooltip_formula_html([
-    ['type' => 'ref', 'table' => FINRAP_PROJECT_TASK_ENTITY_SET, 'field' => FINRAP_PROJECT_TASK_CONTRACT_FIELD],
+    ['type' => 'ref', 'table' => FINRAP_BILLABLE_PLANNING_LINES_ENTITY_SET, 'field' => FINRAP_BILLABLE_PLANNING_AMOUNT_FIELD],
     ['type' => 'text', 'text' => ' - '],
     ['type' => 'ref', 'table' => FINRAP_PROJECT_TASK_ENTITY_SET, 'field' => FINRAP_PROJECT_TASK_EAC_COST_FIELD],
 ]);
@@ -790,7 +791,8 @@ $tooltipOrderResult = finrap_tooltip_formula_html([
     ['type' => 'text', 'text' => '(Contract Value - VC Costs) + Variance'],
 ]);
 $tooltipInstallmentsInvoiced = finrap_tooltip_formula_html([
-    ['type' => 'ref', 'table' => FINRAP_PROJECT_TASK_ENTITY_SET, 'field' => FINRAP_PROJECT_TASK_INVOICED_PRICE_FIELD],
+    ['type' => 'ref', 'table' => FINRAP_BILLABLE_PLANNING_LINES_ENTITY_SET, 'field' => FINRAP_BILLABLE_PLANNING_INVOICED_FIELD],
+    ['type' => 'text', 'text' => ' (Type = ' . FINRAP_BUDGET_REVENUE_TYPE . ', No = ' . FINRAP_BUDGET_REVENUE_NO . ')' . finrap_tooltip_vat_suffix('excl')],
 ]);
 $tooltipInstallmentsReceived = finrap_tooltip_formula_html([
     ['type' => 'ref', 'table' => 'Customer_Ledger_Entries', 'field' => 'Sales_LCY'],
@@ -823,8 +825,8 @@ $tooltipTermijnClosedDate = finrap_tooltip_formula_html([
     ['type' => 'ref', 'table' => 'Customer_Ledger_Entries', 'field' => 'Closed_at_Date'],
 ]);
 $tooltipTermijnAmount = finrap_tooltip_formula_html([
-    ['type' => 'ref', 'table' => 'FactureerbareProjectPlanningsRegels', 'field' => 'Line_Amount_LCY'],
-    ['type' => 'text', 'text' => finrap_tooltip_vat_suffix('excl')],
+    ['type' => 'ref', 'table' => FINRAP_BILLABLE_PLANNING_LINES_ENTITY_SET, 'field' => FINRAP_BILLABLE_PLANNING_AMOUNT_FIELD],
+    ['type' => 'text', 'text' => ' (Type = ' . FINRAP_BUDGET_REVENUE_TYPE . ', No = ' . FINRAP_BUDGET_REVENUE_NO . ')' . finrap_tooltip_vat_suffix('excl')],
 ]);
 
 $termijnLines = is_array($modal['termijn_lines'] ?? null) ? $modal['termijn_lines'] : [];
