@@ -280,6 +280,37 @@ function finance_is_revenue_gl_account_line(array $row): bool
 }
 
 /**
+ * Bepaalt of Line_Type een factureerbare/billable planningregel aanduidt.
+ * Accepteert Engelse `billable` en Nederlandse `factureerbaar` / `factureer*`
+ * (case-insensitive). Lege waarden tellen niet mee.
+ */
+function finance_line_type_is_billable(string $lineType): bool
+{
+    $normalized = strtolower(trim($lineType));
+    if ($normalized === '') {
+        return false;
+    }
+
+    return str_contains($normalized, 'billable')
+        || str_contains($normalized, 'factureer');
+}
+
+/**
+ * Bepaalt of Line_Type een prognose/forecast-regel aanduidt.
+ * Accepteert Engelse `forecast` en Nederlandse `prognose` (case-insensitive).
+ */
+function finance_line_type_is_forecast(string $lineType): bool
+{
+    $normalized = strtolower(trim($lineType));
+    if ($normalized === '') {
+        return false;
+    }
+
+    return str_contains($normalized, 'forecast')
+        || str_contains($normalized, 'prognose');
+}
+
+/**
  * Berekent ongeboekte kosten voor één projectplanningsregel:
  * Qty_to_Transfer_to_Journal × Unit_Cost_LCY.
  */

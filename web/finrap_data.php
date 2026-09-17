@@ -2340,11 +2340,10 @@ function finrap_baseline_row_counts_as_budget_revenue(array $baselineRow): bool
 
 function finrap_planning_row_is_billable_line_type(array $planningRow): bool
 {
-    $lineType = strtolower(trim((string) ($planningRow['Line_Type'] ?? '')));
-    $isFactureerbaar = str_contains($lineType, 'factureer');
-    $isForecast = str_contains($lineType, 'prognose') || str_contains($lineType, 'forecast');
+    $lineType = (string) ($planningRow['Line_Type'] ?? '');
 
-    return $isFactureerbaar && !$isForecast;
+    return finance_line_type_is_billable($lineType)
+        && !finance_line_type_is_forecast($lineType);
 }
 
 function finrap_planning_row_counts_as_contract_revenue(array $planningRow): bool
@@ -2353,10 +2352,9 @@ function finrap_planning_row_counts_as_contract_revenue(array $planningRow): boo
         return false;
     }
 
-    $lineType = strtolower(trim((string) ($planningRow['Line_Type'] ?? '')));
-    $isForecast = str_contains($lineType, 'prognose') || str_contains($lineType, 'forecast');
+    $lineType = (string) ($planningRow['Line_Type'] ?? '');
 
-    return !$isForecast;
+    return !finance_line_type_is_forecast($lineType);
 }
 
 function finrap_filter_gl_revenue_planning_rows(array $planningRows): array
