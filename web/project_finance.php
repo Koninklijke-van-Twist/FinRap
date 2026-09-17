@@ -1179,15 +1179,11 @@ class ProjectFinanceService
 
     /**
      * Bepaalt of Line_Type de billable-status bevat.
+     * Accepteert Engelse `billable` en Nederlandse `factureerbaar` / `factureer*`.
      */
     private static function baselineLineTypeHasBillable(string $lineType): bool
     {
-        $normalized = strtolower(trim($lineType));
-        if ($normalized === '') {
-            return false;
-        }
-
-        return str_contains($normalized, 'billable');
+        return finance_line_type_is_billable($lineType);
     }
 
     /**
