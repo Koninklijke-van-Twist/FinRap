@@ -2459,7 +2459,7 @@ function finrap_fetch_filtered_baseline_rows(
         . ' and ' . FINRAP_BUDGET_HOURS_FILTER_BASELINE_FIELD . ' eq true';
 
     if (trim(FINRAP_BUDGET_REVENUE_TYPE) !== '') {
-        $baselineFilter .= " and Type eq '" . str_replace("'", "''", FINRAP_BUDGET_REVENUE_TYPE) . "'";
+        $baselineFilter .= ' and ' . finance_revenue_gl_account_type_odata_filter();
     }
 
     if (trim(FINRAP_BUDGET_REVENUE_NO) !== '') {
@@ -3648,7 +3648,6 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
     $projectTaskRows = finrap_fetch_project_task_rows($baseUrl, $environment, $company, $auth, $projectFilter, $ttl);
     $changeOrderByTask = finrap_parse_project_task_change_orders_by_task($projectTaskRows, $projectNo);
 
-    $escapedRevenueType = str_replace("'", "''", FINRAP_BUDGET_REVENUE_TYPE);
     $escapedRevenueNo = str_replace("'", "''", FINRAP_BUDGET_REVENUE_NO);
     $billablePlanningSelect = 'Job_No,Line_No,Line_Type,Job_Task_No,Type,No,Description,Document_No,'
         . FINRAP_BILLABLE_PLANNING_AMOUNT_FIELD
@@ -3657,7 +3656,7 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
         . ',LVS_Document_Status,'
         . FINRAP_PROJECT_TASK_CHANGE_ORDER_FIELD;
     $billablePlanningFilter = $projectFilter
-        . " and Type eq '" . $escapedRevenueType . "'"
+        . ' and ' . finance_revenue_gl_account_type_odata_filter()
         . " and No eq '" . $escapedRevenueNo . "'";
 
     $planningTotalsAvailable = true;
@@ -3667,6 +3666,14 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
             '$filter' => $billablePlanningFilter,
         ]);
         $contractRows = odata_get_all($contractUrl, $auth, $ttl);
+        if ($contractRows === []) {
+            $noOnlyFilter = $projectFilter . " and No eq '" . $escapedRevenueNo . "'";
+            $contractUrl = finrap_company_entity_url_with_query($baseUrl, $environment, $company, FINRAP_BILLABLE_PLANNING_LINES_ENTITY_SET, [
+                '$select' => $billablePlanningSelect,
+                '$filter' => $noOnlyFilter,
+            ]);
+            $contractRows = odata_get_all($contractUrl, $auth, $ttl);
+        }
     } catch (Throwable $ignoredFilteredContractLoadError) {
         try {
             $contractUrl = finrap_company_entity_url_with_query($baseUrl, $environment, $company, FINRAP_BILLABLE_PLANNING_LINES_ENTITY_SET, [
@@ -3730,18 +3737,7 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
     $termijnLines = finrap_enrich_termijn_lines_with_customer_ledger($termijnLines, $customerRows);
     $modal['termijn_lines'] = $termijnLines;
 
-    foreach ($customerRows as $customerRow) {
-        if (!is_array($customerRow)) {
-            continue;
-        }
-
-        $receivedAmount = finance_to_float($customerRow['Sales_LCY'] ?? 0.0)
-            - finance_to_float($customerRow['Remaining_Amt_LCY'] ?? 0.0);
-        $modal['installments_received'] = finance_add_amount(
-            (float) ($modal['installments_received'] ?? 0.0),
-            $receivedAmount
-        );
-    }
+    $modal['installments_received'] = finance_column_installments_received($customerRows);
 
     try {
         $taskUrl = finrap_company_entity_url_with_query($baseUrl, $environment, $company, 'ProjectenJobTaskLines', [

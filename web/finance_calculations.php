@@ -4,6 +4,7 @@
  * Constants
  */
 const FINANCE_REVENUE_GL_ACCOUNT_TYPE = 'GB-rekening';
+const FINANCE_REVENUE_GL_ACCOUNT_TYPE_ODATA = 'G/L Account';
 const FINANCE_REVENUE_GL_ACCOUNT_NO = '800000';
 
 /**
@@ -265,9 +266,104 @@ function finance_workorder_total_revenue(array $workorder): float
 }
 
 /**
+ * Berekent kolomwaarde Ontvangen termijnen voor één klantpost, excl. BTW.
+ *
+ * Sales_LCY is excl. BTW; Amount_LCY en Remaining_Amt_LCY zijn incl. BTW.
+ * Open facturen (Remaining = Amount) gaven met Sales − Remaining de BTW
+ * als negatief “ontvangen” (PRJ2607934: 21150 − 25591,50 = −4441,50).
+ * Formule: Sales_LCY × (Amount_LCY − Remaining_Amt_LCY) / Amount_LCY.
+ * Betalingen hebben Sales_LCY = 0 en tellen niet dubbel mee.
+ */
+function finance_column_installments_received_ledger_line(array $ledgerRow): float
+{
+    $salesLcy = finance_to_float($ledgerRow['Sales_LCY'] ?? 0.0);
+    $amountLcy = finance_to_float($ledgerRow['Amount_LCY'] ?? 0.0);
+    $remainingLcy = finance_to_float($ledgerRow['Remaining_Amt_LCY'] ?? 0.0);
+
+    if (abs($amountLcy) < 0.000001) {
+        return 0.0;
+    }
+
+    return $salesLcy * (($amountLcy - $remainingLcy) / $amountLcy);
+}
+
+/**
+ * Berekent kolomwaarde Ontvangen termijnen als som van ontvangen excl. BTW
+ * over alle Customer_Ledger_Entries van het project.
+ */
+function finance_column_installments_received(array $customerLedgerRows): float
+{
+    $total = 0.0;
+
+    foreach ($customerLedgerRows as $ledgerRow) {
+        if (!is_array($ledgerRow)) {
+            continue;
+        }
+
+        $total = finance_add_amount($total, finance_column_installments_received_ledger_line($ledgerRow));
+    }
+
+    return $total;
+}
+
+/**
+ * Geeft de Type-waarde(n) die BC OData accepteert voor de G/L-omzetrekening.
+ * Job Planning Line Type-enum: Resource, Item, G/L Account, Text.
+ * NL-caption `GB-rekening` en enum-naam `GLAccount` zijn ongeldig in $filter (HTTP 400).
+ */
+function finance_revenue_gl_account_type_odata_values(): array
+{
+    return [
+        FINANCE_REVENUE_GL_ACCOUNT_TYPE_ODATA,
+    ];
+}
+
+/**
+ * Bouwt een OData Type-filter met alleen de BC-enumwaarde `G/L Account`.
+ * Geen OR met GB-rekening of GLAccount: die waarden laten de hele query 400'en.
+ */
+function finance_revenue_gl_account_type_odata_filter(string $fieldName = 'Type'): string
+{
+    $field = trim($fieldName);
+    if ($field === '') {
+        $field = 'Type';
+    }
+
+    $escaped = str_replace("'", "''", FINANCE_REVENUE_GL_ACCOUNT_TYPE_ODATA);
+
+    return $field . " eq '" . $escaped . "'";
+}
+
+/**
+ * Geeft het Type-label voor UI-formules: de OData-enumwaarde `G/L Account`.
+ */
+function finance_revenue_gl_account_type_label(): string
+{
+    return FINANCE_REVENUE_GL_ACCOUNT_TYPE_ODATA;
+}
+
+/**
+ * Bepaalt of Type een G/L-/grootboekrekening aanduidt.
+ * Accepteert NL `GB-rekening` en EN `G/L Account` / `GLAccount` (case-insensitive,
+ * spaties/streepjes/slashes genegeerd). Lege waarden tellen niet mee.
+ */
+function finance_is_revenue_gl_account_type(string $type): bool
+{
+    $token = strtolower(trim($type));
+    if ($token === '') {
+        return false;
+    }
+
+    $token = str_replace([' ', '_', '-', '/', '\\'], '', $token);
+
+    return in_array($token, ['gbrekening', 'glaccount', 'glrekening', 'grootboekrekening'], true);
+}
+
+/**
  * Bepaalt of een BC-projectplanningsregel (Job Planning Line / JobBaselineLines /
  * FactureerbareProjectPlanningsRegels) meetelt voor aanneemsom/omzet.
- * Alleen G/L-omzetrekening Type = GB-rekening en No = 800000 telt mee;
+ * Alleen G/L-omzetrekening Type = G/L Account (OData) of PHP-alias GB-rekening/GLAccount
+ * en No = 800000 telt mee;
  * resource-/artikelboekingen op dezelfde planning blijven buiten deze som.
  */
 function finance_is_revenue_gl_account_line(array $row): bool
@@ -275,7 +371,7 @@ function finance_is_revenue_gl_account_line(array $row): bool
     $type = trim((string) ($row['Type'] ?? ''));
     $no = trim((string) ($row['No'] ?? ''));
 
-    return strcasecmp($type, FINANCE_REVENUE_GL_ACCOUNT_TYPE) === 0
+    return finance_is_revenue_gl_account_type($type)
         && $no === FINANCE_REVENUE_GL_ACCOUNT_NO;
 }
 
