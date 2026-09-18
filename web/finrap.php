@@ -208,6 +208,29 @@ function finrap_cost_group_value_tooltip_html(string $columnKey): string
         ]);
     }
 
+    if ($columnKey === 'To_Book_Cost') {
+        return finrap_tooltip_formula_html([
+            ['type' => 'text', 'text' => '('],
+            ['type' => 'ref', 'table' => 'Purchase_Order_Lines', 'field' => 'Completely_Received'],
+            ['type' => 'text', 'text' => ' / '],
+            ['type' => 'ref', 'table' => 'Purchase_Order_Lines', 'field' => 'LVS_Completely_Received'],
+            ['type' => 'text', 'text' => ', Qty_Posted = 0) + ('],
+            ['type' => 'ref', 'table' => FINRAP_PLANNING_LINES_ENTITY_SET, 'field' => 'Qty_to_Transfer_to_Journal'],
+            ['type' => 'text', 'text' => ' × '],
+            ['type' => 'ref', 'table' => FINRAP_PLANNING_LINES_ENTITY_SET, 'field' => 'Unit_Cost_LCY'],
+            ['type' => 'text', 'text' => ')' . finrap_tooltip_vat_suffix('excl')],
+        ]);
+    }
+
+    if ($columnKey === 'Costs_Total') {
+        return finrap_tooltip_formula_html([
+            ['type' => 'text', 'text' => LOC('report.col.booked_cost')],
+            ['type' => 'text', 'text' => ' + '],
+            ['type' => 'text', 'text' => LOC('report.col.to_book_cost')],
+            ['type' => 'text', 'text' => finrap_tooltip_vat_suffix('excl')],
+        ]);
+    }
+
     if ($columnKey === 'Unposted_Cost') {
         return finrap_tooltip_formula_html([
             ['type' => 'ref', 'table' => FINRAP_PLANNING_LINES_ENTITY_SET, 'field' => 'Qty_to_Transfer_to_Journal'],
@@ -263,7 +286,7 @@ function finrap_currency_sign_class(float $value, bool $invertForCost = false): 
 
 function finrap_is_cost_metric_column(string $columnKey): bool
 {
-    return in_array($columnKey, ['Budget_Cost', 'EAC', 'Booked_Cost', 'Unposted_Cost', 'Entered_Obligations'], true);
+    return in_array($columnKey, ['Budget_Cost', 'EAC', 'Booked_Cost', 'To_Book_Cost', 'Costs_Total', 'Unposted_Cost', 'Entered_Obligations'], true);
 }
 
 function finrap_rows_have_non_zero_amount(array $rows, string $fieldName): bool
@@ -313,9 +336,14 @@ function finrap_format_report_datetime(string $rawDateTime): string
     return $dt->format('j') . ' ' . $monthLabel . ' ' . $dt->format('Y, H:i');
 }
 
-function finrap_cost_group_columns(bool $includeUnpostedCost = true): array
+function finrap_is_split_cost_column(string $columnKey): bool
 {
-    $columns = [
+    return in_array($columnKey, ['Booked_Cost', 'To_Book_Cost'], true);
+}
+
+function finrap_cost_group_columns(): array
+{
+    return [
         ['key' => 'Cost_Group_Code', 'label' => LOC('report.col.cost_group_code'), 'is_right' => false, 'tooltip' => ''],
         ['key' => 'Cost_Group_Description', 'label' => LOC('report.col.cost_group_description'), 'is_right' => false, 'tooltip' => ''],
         ['key' => 'Budget_Hours', 'label' => LOC('report.col.budget_hours'), 'is_right' => true, 'tooltip' => LOC('report.tooltip.col.budget_hours')],
@@ -323,17 +351,12 @@ function finrap_cost_group_columns(bool $includeUnpostedCost = true): array
         ['key' => 'Booked_Hours', 'label' => LOC('report.col.booked_hours'), 'is_right' => true, 'tooltip' => LOC('report.tooltip.col.booked_hours')],
         ['key' => 'Budget_Cost', 'label' => LOC('report.col.budget_cost'), 'is_right' => true, 'tooltip' => LOC('report.tooltip.col.budget_cost')],
         ['key' => 'EAC', 'label' => LOC('report.col.eac'), 'is_right' => true, 'tooltip' => LOC('report.tooltip.col.eac')],
-        ['key' => 'Booked_Cost', 'label' => LOC('report.col.booked_cost'), 'is_right' => true, 'tooltip' => LOC('report.tooltip.col.booked_cost')],
+        ['key' => 'Booked_Cost', 'label' => LOC('report.col.booked_cost'), 'is_right' => true, 'tooltip' => LOC('report.tooltip.col.booked_cost'), 'split_only' => true],
+        ['key' => 'To_Book_Cost', 'label' => LOC('report.col.to_book_cost'), 'is_right' => true, 'tooltip' => LOC('report.tooltip.col.to_book_cost'), 'split_only' => true],
+        ['key' => 'Costs_Total', 'label' => LOC('report.col.costs_total'), 'is_right' => true, 'tooltip' => LOC('report.tooltip.col.costs_total')],
+        ['key' => 'Entered_Obligations', 'label' => LOC('report.col.entered_obligations'), 'is_right' => true, 'tooltip' => LOC('report.tooltip.col.entered_obligations')],
+        ['key' => 'Variance_Budget_EAC', 'label' => LOC('report.col.variance_budget_eac'), 'is_right' => true, 'tooltip' => LOC('report.tooltip.col.variance_budget_eac')],
     ];
-
-    if ($includeUnpostedCost) {
-        $columns[] = ['key' => 'Unposted_Cost', 'label' => LOC('report.col.unposted_cost'), 'is_right' => true, 'tooltip' => LOC('report.tooltip.col.unposted_cost')];
-    }
-
-    $columns[] = ['key' => 'Entered_Obligations', 'label' => LOC('report.col.entered_obligations'), 'is_right' => true, 'tooltip' => LOC('report.tooltip.col.entered_obligations')];
-    $columns[] = ['key' => 'Variance_Budget_EAC', 'label' => LOC('report.col.variance_budget_eac'), 'is_right' => true, 'tooltip' => LOC('report.tooltip.col.variance_budget_eac')];
-
-    return $columns;
 }
 
 function finrap_task_row_has_non_zero_metrics(array $row): bool
@@ -347,6 +370,8 @@ function finrap_task_row_has_non_zero_metrics(array $row): bool
         'EAC_Hours',
         'Booked_Hours',
         'Booked_Cost',
+        'To_Book_Cost',
+        'Costs_Total',
         'Unposted_Cost',
         'Entered_Obligations',
         'Variance_Budget_EAC',
@@ -400,14 +425,20 @@ function finrap_is_all_zero_totals_row(array $row, array $allTaskRows = []): boo
 
 function finrap_render_cost_group_table(array $taskRows, bool $totalsOnly = false, bool $hideAllZeroTotals = false, string $tableId = ''): void
 {
-    $includeUnpostedCost = finrap_rows_have_non_zero_amount($taskRows, 'Unposted_Cost');
-    $columns = finrap_cost_group_columns($includeUnpostedCost);
+    $columns = finrap_cost_group_columns();
     $tableIdAttr = $tableId !== '' ? ' id="' . htmlspecialchars($tableId) . '"' : '';
 
     echo '<table class="project-cost-group-table"' . $tableIdAttr . '>';
     echo '<thead><tr>';
     foreach ($columns as $column) {
-        $thClass = (bool) ($column['is_right'] ?? false) ? ' class="is-right"' : '';
+        $classes = [];
+        if ((bool) ($column['is_right'] ?? false)) {
+            $classes[] = 'is-right';
+        }
+        if ((bool) ($column['split_only'] ?? false) || finrap_is_split_cost_column((string) ($column['key'] ?? ''))) {
+            $classes[] = 'finrap-split-only';
+        }
+        $thClass = $classes !== [] ? ' class="' . htmlspecialchars(implode(' ', $classes)) . '"' : '';
         $tooltip = (string) ($column['tooltip'] ?? '');
         $tooltipAttr = $tooltip !== '' ? ' data-tooltip="' . htmlspecialchars($tooltip) . '"' : '';
         echo '<th' . $thClass . $tooltipAttr . '>' . htmlspecialchars((string) ($column['label'] ?? '')) . '</th>';
@@ -494,8 +525,11 @@ function finrap_render_cost_group_table(array $taskRows, bool $totalsOnly = fals
             }
 
             $cellClass = trim('is-right ' . finrap_currency_sign_class($value, finrap_is_cost_metric_column($columnKey)));
+            if (finrap_is_split_cost_column($columnKey) || (bool) ($column['split_only'] ?? false)) {
+                $cellClass = trim($cellClass . ' finrap-split-only');
+            }
             $display = htmlspecialchars(finrap_format_currency($value));
-            $metricAttr = in_array($columnKey, ['Budget_Cost', 'EAC', 'Booked_Cost', 'Unposted_Cost', 'Entered_Obligations', 'Variance_Budget_EAC'], true)
+            $metricAttr = in_array($columnKey, ['Budget_Cost', 'EAC', 'Booked_Cost', 'To_Book_Cost', 'Costs_Total', 'Entered_Obligations', 'Variance_Budget_EAC'], true)
                 ? ' data-metric-key="' . htmlspecialchars($columnKey) . '"'
                 : '';
             echo '<td class="' . htmlspecialchars($cellClass) . '"' . $metricAttr . '>' . finrap_render_value_with_tooltip_html($display, $tooltipHtml) . '</td>';
@@ -536,6 +570,11 @@ function finrap_task_rows_for_client(array $taskRows): array
             'eac_hours' => finance_to_float($taskRow['EAC_Hours'] ?? 0.0),
             'booked_hours' => finance_to_float($taskRow['Booked_Hours'] ?? 0.0),
             'booked_cost' => finance_to_float($taskRow['Booked_Cost'] ?? 0.0),
+            'to_book_cost' => finance_to_float($taskRow['To_Book_Cost'] ?? $taskRow['Unposted_Cost'] ?? 0.0),
+            'costs_total' => finance_column_costs_total(
+                finance_to_float($taskRow['Booked_Cost'] ?? 0.0),
+                finance_to_float($taskRow['To_Book_Cost'] ?? $taskRow['Unposted_Cost'] ?? 0.0)
+            ),
             'unposted_cost' => finance_to_float($taskRow['Unposted_Cost'] ?? 0.0),
             'entered_obligations' => finance_to_float($taskRow['Entered_Obligations'] ?? 0.0),
             'invoiced_amount' => finance_to_float($taskRow['Invoiced_Amount'] ?? 0.0),
@@ -549,6 +588,26 @@ function finrap_task_rows_for_client(array $taskRows): array
 /**
  * Page load
  */
+if (trim((string) ($_GET['action'] ?? '')) === 'save_split_booked_preference') {
+    $prefEmail = strtolower(trim((string) ($_SESSION['user']['email'] ?? '')));
+    if ($prefEmail === '') {
+        finrap_json_response(['ok' => false, 'error' => LOC('error.save_preference_failed')], 401);
+    }
+
+    $splitInput = trim((string) ($_POST['split_booked_to_book'] ?? ''));
+    $splitValue = !in_array($splitInput, ['0', 'false', 'off'], true);
+
+    $saveOk = saveUserPref($prefEmail, 'split_booked_to_book', $splitValue);
+    if (!$saveOk) {
+        finrap_json_response(['ok' => false, 'error' => LOC('error.save_preference_failed')], 500);
+    }
+
+    finrap_json_response([
+        'ok' => true,
+        'split_booked_to_book' => $splitValue,
+    ]);
+}
+
 $company = trim((string) ($_GET['company'] ?? ''));
 $projectNo = trim((string) ($_GET['project_no'] ?? ''));
 $reportId = trim((string) ($_GET['report_id'] ?? ''));
@@ -592,15 +651,20 @@ $orderReference = (string) ($project['Your_Reference'] ?? $project['LVS_Your_ref
 $createdAt = (string) ($report['fetched_at'] ?? '');
 $createdAtFormatted = finrap_format_report_datetime($createdAt);
 $contractValue = (float) ($modal['contract_value'] ?? 0.0);
-$headerMetricRows = is_array($modal['header_metric_rows'] ?? null) ? $modal['header_metric_rows'] : [[
-    'type' => 'PRJ',
-    'contract_value' => $contractValue,
-    'is_project_row' => true,
-]];
+$headerMetricRows = finrap_normalize_loaded_header_metric_rows(
+    is_array($modal['header_metric_rows'] ?? null) ? $modal['header_metric_rows'] : [[
+        'type' => 'PRJ',
+        'contract_value' => $contractValue,
+        'is_project_row' => true,
+    ]]
+);
 $showHeaderTypeColumn = finrap_header_table_has_change_orders($headerMetricRows);
 $showHeaderBudgetRevenueColumn = finrap_header_shows_budget_revenue_column($headerMetricRows);
-$showHeaderUnpostedCostColumn = finrap_rows_have_non_zero_amount($headerMetricRows, 'unposted_cost')
-    || finrap_rows_have_non_zero_amount($taskRows, 'Unposted_Cost');
+$splitBookedToBook = userPrefFlagEnabled(
+    strtolower(trim((string) ($_SESSION['user']['email'] ?? ''))),
+    'split_booked_to_book',
+    true
+);
 $taskRowsTotal = is_array($modal['task_rows_total'] ?? null) ? $modal['task_rows_total'] : [];
 $summaryTotals = finrap_get_report_summary_totals($taskRows);
 $budgetCostTotal = (float) ($summaryTotals['Budget_Cost'] ?? 0.0);
@@ -609,8 +673,9 @@ $totalDirectCost = $budgetCostTotal;
 $grossProfit = $contractValue - $totalDirectCost;
 
 $bookedCostTotal = (float) ($summaryTotals['Booked_Cost'] ?? 0.0);
-$unpostedCostTotal = (float) ($summaryTotals['Unposted_Cost'] ?? 0.0);
-$pocCostProgressTotal = finance_column_poc_cost_progress($bookedCostTotal, $unpostedCostTotal);
+$toBookCostTotal = (float) ($summaryTotals['To_Book_Cost'] ?? $summaryTotals['Unposted_Cost'] ?? 0.0);
+$costsTotal = (float) ($summaryTotals['Costs_Total'] ?? finance_column_costs_total($bookedCostTotal, $toBookCostTotal));
+$pocCostProgressTotal = finance_column_poc_cost_progress($bookedCostTotal, $toBookCostTotal);
 $eacTotal = (float) ($summaryTotals['EAC'] ?? 0.0);
 $budgetHoursTotal = (float) ($summaryTotals['Budget_Hours'] ?? 0.0);
 $eacHoursTotal = (float) ($summaryTotals['EAC_Hours'] ?? 0.0);
@@ -699,7 +764,7 @@ $tooltipPocBaseline = finrap_tooltip_formula_html([
     ['type' => 'text', 'text' => '('],
     ['type' => 'text', 'text' => LOC('report.col.booked_cost')],
     ['type' => 'text', 'text' => ' + '],
-    ['type' => 'text', 'text' => LOC('report.col.unposted_cost')],
+    ['type' => 'text', 'text' => LOC('report.col.to_book_cost')],
     ['type' => 'text', 'text' => ') / '],
     ['type' => 'text', 'text' => LOC('report.col.budget_cost')],
 ]);
@@ -707,7 +772,7 @@ $tooltipPocEac = finrap_tooltip_formula_html([
     ['type' => 'text', 'text' => '('],
     ['type' => 'text', 'text' => LOC('report.col.booked_cost')],
     ['type' => 'text', 'text' => ' + '],
-    ['type' => 'text', 'text' => LOC('report.col.unposted_cost')],
+    ['type' => 'text', 'text' => LOC('report.col.to_book_cost')],
     ['type' => 'text', 'text' => ') / '],
     ['type' => 'text', 'text' => LOC('report.col.eac')],
 ]);
@@ -1188,7 +1253,8 @@ $finrapReportId = $reportId;
 
         @media print {
             .finrap-column-help-btn,
-            .finrap-info-modal-overlay {
+            .finrap-info-modal-overlay,
+            .finrap-split-toggle {
                 display: none !important;
             }
         }
@@ -1215,6 +1281,31 @@ $finrapReportId = $reportId;
         }
 
         .project-cost-group-table tbody tr.is-zero-total-hidden {
+            display: none;
+        }
+
+        .finrap-split-toggle {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            margin: 0 0 10px;
+            font-size: 13px;
+            color: #334155;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .finrap-split-toggle input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            min-height: 0;
+            margin: 0;
+            padding: 0;
+            flex: 0 0 auto;
+            accent-color: var(--kvt-perkins-blue, #0052a3);
+        }
+
+        body.finrap-split-off .finrap-split-only {
             display: none;
         }
 
@@ -1889,7 +1980,7 @@ $finrapReportId = $reportId;
     </style>
 </head>
 
-<body class="<?= $embedMode ? 'embed-mode' : '' ?>">
+<body class="<?= trim(($embedMode ? 'embed-mode ' : '') . ($splitBookedToBook ? 'finrap-split-on' : 'finrap-split-off')) ?>">
     <?php if (!$embedMode): ?>
         <?php renderLanguageSwitcher(); ?>
     <?php endif; ?>
@@ -1966,6 +2057,12 @@ $finrapReportId = $reportId;
                     </section>
 
                     <section class="project-modal-summary-section">
+                        <label class="finrap-split-toggle">
+                            <input type="checkbox"
+                                id="finrapSplitBookedToBook"
+                                <?= $splitBookedToBook ? 'checked' : '' ?>>
+                            <?= htmlspecialchars(LOC('report.split_booked_to_book'), ENT_QUOTES) ?>
+                        </label>
                         <table class="project-metric-table">
                             <thead>
                                 <tr>
@@ -1991,10 +2088,9 @@ $finrapReportId = $reportId;
                                     </th>
                                     <th class="is-right" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.eac_gross_profit'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.eac_gross_profit'), ENT_QUOTES) ?>
                                     </th>
-                                    <th class="is-right" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.col.booked_cost'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.col.booked_cost'), ENT_QUOTES) ?></th>
-                                    <?php if ($showHeaderUnpostedCostColumn): ?>
-                                    <th class="is-right" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.col.unposted_cost'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.col.unposted_cost'), ENT_QUOTES) ?></th>
-                                    <?php endif; ?>
+                                    <th class="is-right finrap-split-only" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.col.booked_cost'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.col.booked_cost'), ENT_QUOTES) ?></th>
+                                    <th class="is-right finrap-split-only" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.col.to_book_cost'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.col.to_book_cost'), ENT_QUOTES) ?></th>
+                                    <th class="is-right" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.col.costs_total'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.col.costs_total'), ENT_QUOTES) ?></th>
                                     <th class="is-right" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.installments_invoiced'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.installments_invoiced'), ENT_QUOTES) ?>
                                     </th>
                                     <th class="is-right" data-tooltip="<?= htmlspecialchars(LOC('report.tooltip.installments_received'), ENT_QUOTES) ?>"><?= htmlspecialchars(LOC('report.installments_received'), ENT_QUOTES) ?>
@@ -2021,7 +2117,11 @@ $finrapReportId = $reportId;
                                             ?? ($isProjectHeaderRow ? ($contractValue - $eacTotal) : ($headerContractValue - $headerEacCost))
                                     );
                                     $headerBookedCost = finance_to_float($headerMetricRow['booked_cost'] ?? ($isProjectHeaderRow ? $bookedCostTotal : 0.0));
-                                    $headerUnpostedCost = finance_to_float($headerMetricRow['unposted_cost'] ?? ($isProjectHeaderRow ? $unpostedCostTotal : 0.0));
+                                    $headerToBookCost = finance_to_float($headerMetricRow['to_book_cost'] ?? $headerMetricRow['unposted_cost'] ?? ($isProjectHeaderRow ? $toBookCostTotal : 0.0));
+                                    $headerCostsTotal = finance_to_float(
+                                        $headerMetricRow['costs_total']
+                                            ?? finance_column_costs_total($headerBookedCost, $headerToBookCost)
+                                    );
                                     $headerInstallmentsInvoiced = finance_to_float($headerMetricRow['installments_invoiced'] ?? ($isProjectHeaderRow ? $installmentsInvoiced : 0.0));
                                     $headerInstallmentsReceived = array_key_exists('installments_received', $headerMetricRow)
                                         ? finance_to_float($headerMetricRow['installments_received'])
@@ -2048,14 +2148,15 @@ $finrapReportId = $reportId;
                                     <td class="is-right <?= finrap_currency_sign_class($headerEacGrossProfit) ?>"<?= $isProjectHeaderRow ? ' id="metricEacGrossProfit"' : '' ?>>
                                         <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($headerEacGrossProfit)), $tooltipEacGrossProfit) ?>
                                     </td>
-                                    <td class="is-right <?= finrap_currency_sign_class($headerBookedCost, true) ?>"<?= $isProjectHeaderRow ? ' id="metricBookedCost"' : '' ?>>
+                                    <td class="is-right finrap-split-only <?= finrap_currency_sign_class($headerBookedCost, true) ?>"<?= $isProjectHeaderRow ? ' id="metricBookedCost"' : '' ?>>
                                         <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($headerBookedCost)), finrap_cost_group_value_tooltip_html('Booked_Cost')) ?>
                                     </td>
-                                    <?php if ($showHeaderUnpostedCostColumn): ?>
-                                    <td class="is-right <?= finrap_currency_sign_class($headerUnpostedCost, true) ?>"<?= $isProjectHeaderRow ? ' id="metricUnpostedCost"' : '' ?>>
-                                        <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($headerUnpostedCost)), finrap_cost_group_value_tooltip_html('Unposted_Cost')) ?>
+                                    <td class="is-right finrap-split-only <?= finrap_currency_sign_class($headerToBookCost, true) ?>"<?= $isProjectHeaderRow ? ' id="metricToBookCost"' : '' ?>>
+                                        <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($headerToBookCost)), finrap_cost_group_value_tooltip_html('To_Book_Cost')) ?>
                                     </td>
-                                    <?php endif; ?>
+                                    <td class="is-right <?= finrap_currency_sign_class($headerCostsTotal, true) ?>"<?= $isProjectHeaderRow ? ' id="metricCostsTotal"' : '' ?>>
+                                        <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($headerCostsTotal)), finrap_cost_group_value_tooltip_html('Costs_Total')) ?>
+                                    </td>
                                     <td class="is-right <?= finrap_currency_sign_class($headerInstallmentsInvoiced) ?>">
                                         <?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($headerInstallmentsInvoiced)), $tooltipInstallmentsInvoiced) ?>
                                     </td>
@@ -2417,7 +2518,8 @@ $finrapReportId = $reportId;
                     return metricKey === 'Budget_Cost'
                         || metricKey === 'EAC'
                         || metricKey === 'Booked_Cost'
-                        || metricKey === 'Unposted_Cost'
+                        || metricKey === 'To_Book_Cost'
+                        || metricKey === 'Costs_Total'
                         || metricKey === 'Entered_Obligations';
                 }
 
@@ -2469,7 +2571,7 @@ $finrapReportId = $reportId;
                     let eacHoursTotal = 0;
                     let bookedHoursTotal = 0;
                     let bookedTotal = 0;
-                    let unpostedTotal = 0;
+                    let toBookTotal = 0;
                     let obligationsTotal = 0;
                     let invoicedTotal = 0;
 
@@ -2486,7 +2588,7 @@ $finrapReportId = $reportId;
                         eacHoursTotal += Number(row.eac_hours || 0);
                         bookedHoursTotal += Number(row.booked_hours || 0);
                         bookedTotal += Number(row.booked_cost || 0);
-                        unpostedTotal += Number(row.unposted_cost || 0);
+                        toBookTotal += Number(row.to_book_cost || row.unposted_cost || 0);
                         obligationsTotal += Number(row.entered_obligations || 0);
                         invoicedTotal += Number(row.invoiced_amount || 0);
                     });
@@ -2498,7 +2600,8 @@ $finrapReportId = $reportId;
                         eac_hours: eacHoursTotal,
                         booked_hours: bookedHoursTotal,
                         booked_cost: bookedTotal,
-                        unposted_cost: unpostedTotal,
+                        to_book_cost: toBookTotal,
+                        costs_total: bookedTotal + toBookTotal,
                         entered_obligations: obligationsTotal,
                         invoiced_amount: invoicedTotal,
                         variance_budget_eac: budgetTotal - eacTotal
@@ -2531,6 +2634,7 @@ $finrapReportId = $reportId;
                         let eacHoursTotal = 0;
                         let bookedHoursTotal = 0;
                         let bookedTotal = 0;
+                        let toBookTotal = 0;
                         let unpostedTotal = 0;
                         let obligationsTotal = 0;
                         let invoicedTotal = 0;
@@ -2548,6 +2652,7 @@ $finrapReportId = $reportId;
                             eacHoursTotal += Number(detailRow.eac_hours || 0);
                             bookedHoursTotal += Number(detailRow.booked_hours || 0);
                             bookedTotal += Number(detailRow.booked_cost || 0);
+                            toBookTotal += Number(detailRow.to_book_cost || detailRow.unposted_cost || 0);
                             unpostedTotal += Number(detailRow.unposted_cost || 0);
                             obligationsTotal += Number(detailRow.entered_obligations || 0);
                             invoicedTotal += Number(detailRow.invoiced_amount || 0);
@@ -2559,6 +2664,8 @@ $finrapReportId = $reportId;
                         row.eac_hours = eacHoursTotal;
                         row.booked_hours = bookedHoursTotal;
                         row.booked_cost = bookedTotal;
+                        row.to_book_cost = toBookTotal;
+                        row.costs_total = bookedTotal + toBookTotal;
                         row.unposted_cost = unpostedTotal;
                         row.entered_obligations = obligationsTotal;
                         row.invoiced_amount = invoicedTotal;
@@ -2566,6 +2673,8 @@ $finrapReportId = $reportId;
 
                     rows.forEach(function (row)
                     {
+                        row.to_book_cost = Number(row.to_book_cost || row.unposted_cost || 0);
+                        row.costs_total = Number(row.booked_cost || 0) + Number(row.to_book_cost || 0);
                         row.variance_budget_eac = Number(row.budget_cost || 0) - Number(row.eac || 0);
                     });
 
@@ -2592,7 +2701,8 @@ $finrapReportId = $reportId;
                         Number(row.eac_hours || 0),
                         Number(row.booked_hours || 0),
                         Number(row.booked_cost || 0),
-                        Number(row.unposted_cost || 0),
+                        Number(row.to_book_cost || row.unposted_cost || 0),
+                        Number(row.costs_total || 0),
                         Number(row.entered_obligations || 0),
                         Number(row.variance_budget_eac || 0)
                     ];
@@ -2762,8 +2872,9 @@ $finrapReportId = $reportId;
                     const budgetCost = Number(summaryTotals.budget_cost || 0);
                     const eac = Number(summaryTotals.eac || 0);
                     const bookedCost = Number(summaryTotals.booked_cost || 0);
-                    const unpostedCost = Number(summaryTotals.unposted_cost || 0);
-                    const pocCostProgress = bookedCost + unpostedCost;
+                    const toBookCost = Number(summaryTotals.to_book_cost || summaryTotals.unposted_cost || 0);
+                    const costsTotal = Number(summaryTotals.costs_total || (bookedCost + toBookCost));
+                    const pocCostProgress = bookedCost + toBookCost;
                     const budgetHours = Number(summaryTotals.budget_hours || 0);
                     const eacHours = Number(summaryTotals.eac_hours || 0);
                     const bookedHours = Number(summaryTotals.booked_hours || 0);
@@ -2785,7 +2896,8 @@ $finrapReportId = $reportId;
                     updateMetricCell('metricGrossProfit', grossProfit);
                     updateMetricCell('metricEacGrossProfit', eacGrossProfit);
                     updateMetricCell('metricBookedCost', bookedCost, true);
-                    updateMetricCell('metricUnpostedCost', unpostedCost, true);
+                    updateMetricCell('metricToBookCost', toBookCost, true);
+                    updateMetricCell('metricCostsTotal', costsTotal, true);
                     updateMetricCell('metricOrderResult', orderResult);
                     updateAnalyticsValue('metricExpVariance', expVariance, formatCurrency);
                     updateAnalyticsValue('pocBaselineValue', pocBaseline, formatPercent);
@@ -2818,7 +2930,8 @@ $finrapReportId = $reportId;
                         updateTableCell(row.code, 'Budget_Cost', row.budget_cost);
                         updateTableCell(row.code, 'EAC', row.eac);
                         updateTableCell(row.code, 'Booked_Cost', row.booked_cost);
-                        updateTableCell(row.code, 'Unposted_Cost', row.unposted_cost);
+                        updateTableCell(row.code, 'To_Book_Cost', row.to_book_cost);
+                        updateTableCell(row.code, 'Costs_Total', row.costs_total);
                         updateTableCell(row.code, 'Entered_Obligations', row.entered_obligations);
                         updateTableCell(row.code, 'Variance_Budget_EAC', row.variance_budget_eac);
                     });
@@ -2827,6 +2940,36 @@ $finrapReportId = $reportId;
                 }
 
                 renderCalculatedState();
+
+                (function initSplitBookedPreference ()
+                {
+                    const checkbox = document.getElementById('finrapSplitBookedToBook');
+                    if (!checkbox)
+                    {
+                        return;
+                    }
+
+                    function applySplitState (enabled)
+                    {
+                        document.body.classList.toggle('finrap-split-on', enabled);
+                        document.body.classList.toggle('finrap-split-off', !enabled);
+                    }
+
+                    applySplitState(checkbox.checked);
+                    checkbox.addEventListener('change', function ()
+                    {
+                        applySplitState(checkbox.checked);
+                        fetch('finrap.php?action=save_split_booked_preference', {
+                            method: 'POST',
+                            body: new URLSearchParams({
+                                split_booked_to_book: checkbox.checked ? '1' : '0'
+                            })
+                        }).catch(function ()
+                        {
+                            return null;
+                        });
+                    });
+                })();
 
                 (function initFloatingTooltips ()
                 {
