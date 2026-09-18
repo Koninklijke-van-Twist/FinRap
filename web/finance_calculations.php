@@ -416,9 +416,154 @@ function finance_column_unposted_cost_line(float $qtyToTransferToJournal, float 
 }
 
 /**
- * Berekent de POC-kostenteller als geboekte kosten plus ongeboekte kosten.
+ * Interpreteert een OData boolean/flag (true, 1, yes/ja) zonder enum-filters naar BC te sturen.
  */
-function finance_column_poc_cost_progress(float $bookedCost, float $unpostedCost): float
+function finance_odata_flag_is_true(mixed $value): bool
 {
-    return finance_add_amount($bookedCost, $unpostedCost);
+    if (is_bool($value)) {
+        return $value;
+    }
+
+    if (is_int($value) || is_float($value)) {
+        return abs((float) $value) >= 0.000001;
+    }
+
+    $normalized = strtolower(trim((string) $value));
+    if ($normalized === '') {
+        return false;
+    }
+
+    return in_array($normalized, ['true', '1', 'yes', 'ja', 'waar'], true);
+}
+
+/**
+ * Bepaalt of een Job Ledger Type een inkoop-/artikelboeking is (geen uren/resource).
+ * Gebruikt alleen PHP-matching; deze waarden gaan niet als OData-enumfilter naar BC.
+ */
+function finance_ledger_type_is_purchase(string $type): bool
+{
+    $normalized = strtolower(trim($type));
+    if ($normalized === '') {
+        return false;
+    }
+
+    return $normalized === 'item'
+        || $normalized === 'artikel'
+        || $normalized === 'g/l account'
+        || $normalized === 'gb-rekening'
+        || $normalized === 'glaccount'
+        || $normalized === 'gl account';
+}
+
+/**
+ * Berekent het ontvangen (goods-in) bedrag van een inkoopregel.
+ * Volgorde: Quantity_Received × unit cost, daarna Amt_Rcd_Not_Invoiced, daarna Line_Amount
+ * alleen bij Completely_Received. Nooit budget-Total_Cost en nooit Outstanding_Amount.
+ */
+function finance_column_purchase_received_amount(
+    float $amtReceivedNotInvoiced,
+    float $quantityReceived,
+    float $unitCostLcy,
+    float $completelyReceivedLineAmount
+): float
+{
+    $qtyTimesCost = finance_to_float($quantityReceived) * finance_to_float($unitCostLcy);
+    if (abs($qtyTimesCost) >= 0.000001) {
+        return $qtyTimesCost;
+    }
+
+    if (abs($amtReceivedNotInvoiced) >= 0.000001) {
+        return finance_to_float($amtReceivedNotInvoiced);
+    }
+
+    return finance_to_float($completelyReceivedLineAmount);
+}
+
+/**
+ * Berekent te-boeken ontvangen kosten voor één inkoop-/ontvangstregel:
+ * alleen Completely_Received (of LVS-equivalent) én Qty_Posted aanwezig en 0.
+ * Ontbrekende Qty_Posted wordt niet als 0 behandeld (geen aanname “niet geboekt”).
+ * Openstaande PO en budgetregels vallen hier buiten.
+ */
+function finance_column_received_not_posted_line(
+    mixed $completelyReceivedFlag,
+    ?float $qtyPosted,
+    float $receivedAmount
+): float
+{
+    if (!finance_odata_flag_is_true($completelyReceivedFlag)) {
+        return 0.0;
+    }
+
+    if ($qtyPosted === null) {
+        return 0.0;
+    }
+
+    if (abs(finance_to_float($qtyPosted)) >= 0.000001) {
+        return 0.0;
+    }
+
+    return finance_to_float($receivedAmount);
+}
+
+/**
+ * Kiest Qty_Posted: de regelwaarde wint; anders de planning-lookup; anders onbekend (null).
+ */
+function finance_column_resolve_qty_posted(?float $rowQtyPosted, ?float $lookupQtyPosted): ?float
+{
+    if ($rowQtyPosted !== null) {
+        return $rowQtyPosted;
+    }
+
+    return $lookupQtyPosted;
+}
+
+/**
+ * Mag ontvangen-niet-geboekt in Te boeken? Alleen bij lege ledger, of als ledger Type
+ * beschikbaar is om inkoop te cap'en. Bestaande ledgerregels zonder Type: skip
+ * (voorkomt dubbeltelling in Geboekt én Te boeken).
+ */
+function finance_column_received_not_posted_allowed(bool $ledgerHasEntries, bool $ledgerHasType): bool
+{
+    if (!$ledgerHasEntries) {
+        return true;
+    }
+
+    return $ledgerHasType;
+}
+
+/**
+ * Voorkomt dubbeltelling: ontvangen-niet-geboekt minus Job Ledger inkoop op dezelfde taak,
+ * nooit onder nul. Resource/uren in Geboekt worden hier niet afgetrokken.
+ */
+function finance_column_received_not_posted_capped(float $receivedNotPosted, float $bookedPurchaseCost): float
+{
+    $remaining = finance_to_float($receivedNotPosted) - finance_to_float($bookedPurchaseCost);
+
+    return $remaining > 0.0 ? $remaining : 0.0;
+}
+
+/**
+ * Berekent kolomwaarde Te boeken kosten: ongeboekt (Standard journal) plus ontvangen-niet-geboekt.
+ */
+function finance_column_to_book_cost(float $unpostedCost, float $receivedNotPostedCost): float
+{
+    return finance_add_amount($unpostedCost, $receivedNotPostedCost);
+}
+
+/**
+ * Berekent kolomwaarde Totale kosten (FinRap-sleutel Costs_Total): Geboekt + Te boeken.
+ */
+function finance_column_costs_total(float $bookedCost, float $toBookCost): float
+{
+    return finance_add_amount($bookedCost, $toBookCost);
+}
+
+/**
+ * Berekent de POC-kostenteller als geboekte kosten plus te-boeken kosten.
+ * Tweede argument is To_Book_Cost (historisch Unposted_Cost, nu daarin opgenomen).
+ */
+function finance_column_poc_cost_progress(float $bookedCost, float $toBookCost): float
+{
+    return finance_column_costs_total($bookedCost, $toBookCost);
 }

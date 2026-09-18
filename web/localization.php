@@ -188,8 +188,11 @@ const TRANSLATIONS = [
         'report.col.eac' => 'EAC Kosten',
         'report.col.booked_hours' => 'Geboekte uren',
         'report.col.booked_cost' => 'Geboekte kosten',
+        'report.col.to_book_cost' => 'Te boeken kosten',
+        'report.col.costs_total' => 'Totale kosten',
         'report.col.unposted_cost' => 'Ongeboekte kosten',
         'report.col.entered_obligations' => 'Ingevoerde verplichtingen',
+        'report.split_booked_to_book' => 'Geboekt + Te boeken splitsen',
         'report.col.invoiced_amount' => 'Gefactureerd',
         'report.col.variance_budget_eac' => 'Verschil VC - EAC',
         'report.tooltip.col.budget_cost' => 'Voorcalculatie-kosten (LVS_Baseline_Total_Cost) uit ProjectTaken voor deze kostengroep',
@@ -200,6 +203,8 @@ const TRANSLATIONS = [
         'report.tooltip.col.eac' => 'Estimate At Completion kosten (KVT_EAC_Total_Unit_Cost) uit ProjectTaken voor deze kostengroep',
         'report.tooltip.col.booked_hours' => 'Werkelijk geboekte uren tot nu toe (Job_Task_Lines.LVS_Used_Hours_Quantity) voor deze kostengroep',
         'report.tooltip.col.booked_cost' => 'Werkelijk geboekte kosten tot nu toe (JobLedgerEntries.Total_Cost_LCY). Excl. BTW.',
+        'report.tooltip.col.to_book_cost' => 'Kosten die al reëel zijn maar nog niet in het jobdagboek staan: ontvangen inkoop (Completely_Received / LVS_Completely_Received, Qty_Posted = 0) plus ongeboekte Standard-artikelen (Qty_to_Transfer_to_Journal × Unit_Cost_LCY). Geen budget en geen openstaande PO. Excl. BTW.',
+        'report.tooltip.col.costs_total' => 'Som van Geboekte kosten en Te boeken kosten. Excl. BTW.',
         'report.tooltip.col.unposted_cost' => 'Ongeboekte kosten: Qty_to_Transfer_to_Journal × Unit_Cost_LCY uit LVS_JobPlanningLinesSub, alleen voor artikelen met Costing_Method = Standard. Excl. BTW.',
         'report.tooltip.col.entered_obligations' => 'Geregistreerde inkoopbedragen (LVS_Registered_Purchases_Amt) uit ProjectTaken voor deze kostengroep',
         'report.tooltip.col.invoiced_amount' => 'Bedragen gefactureerd aan de klant.',
@@ -239,9 +244,9 @@ const TRANSLATIONS = [
         'report.tooltip.exp.variance' => 'Verschil tussen voorcalculatie en EAC (VC Kosten - EAC)',
         'report.tooltip.exp.order_result' => 'Contractwaarde minus VC Kosten',
         'report.tooltip.exp.ipr_result' => 'Ontvangen termijnen minus geboekte kosten',
-        'report.tooltip.exp.poc_baseline' => 'Geboekte kosten gedeeld door VC Kosten, als percentage',
+        'report.tooltip.exp.poc_baseline' => 'Totale kosten (geboekt + te boeken) gedeeld door VC Kosten, als percentage',
         'report.tooltip.exp.poc_baseline_hours' => 'Geboekte uren gedeeld door VC Uren, als percentage',
-        'report.tooltip.exp.poc_eac' => 'Geboekte kosten gedeeld door EAC Kosten, als percentage',
+        'report.tooltip.exp.poc_eac' => 'Totale kosten (geboekt + te boeken) gedeeld door EAC Kosten, als percentage',
         'report.tooltip.exp.poc_eac_hours' => 'Geboekte uren gedeeld door EAC Uren, als percentage',
         'report.tooltip.exp.work_in_progress_profit' => 'Brutowinst vermenigvuldigd met POC EAC Kosten',
         'report.termijn.empty' => 'Geen termijnfacturen gevonden.',
@@ -438,8 +443,11 @@ const TRANSLATIONS = [
         'report.col.eac' => 'EAC Costs',
         'report.col.booked_hours' => 'Booked hours',
         'report.col.booked_cost' => 'Booked cost',
+        'report.col.to_book_cost' => 'To-book cost',
+        'report.col.costs_total' => 'Total cost',
         'report.col.unposted_cost' => 'Unposted cost',
         'report.col.entered_obligations' => 'Entered obligations',
+        'report.split_booked_to_book' => 'Split booked + to-book',
         'report.col.invoiced_amount' => 'Invoiced',
         'report.col.variance_budget_eac' => 'Variance PC - EAC',
         'report.tooltip.col.budget_cost' => 'Pre-calculation costs (LVS_Baseline_Total_Cost) from ProjectTaken for this cost group',
@@ -450,6 +458,8 @@ const TRANSLATIONS = [
         'report.tooltip.col.eac' => 'Estimate At Completion costs (KVT_EAC_Total_Unit_Cost) from ProjectTaken for this cost group',
         'report.tooltip.col.booked_hours' => 'Actual booked hours to date (Job_Task_Lines.LVS_Used_Hours_Quantity) for this cost group',
         'report.tooltip.col.booked_cost' => 'Actual booked costs to date (JobLedgerEntries.Total_Cost_LCY). Excl. VAT.',
+        'report.tooltip.col.to_book_cost' => 'Real costs not yet in the job ledger: received purchases (Completely_Received / LVS_Completely_Received, Qty_Posted = 0) plus unposted Standard items (Qty_to_Transfer_to_Journal × Unit_Cost_LCY). No budget and no outstanding PO. Excl. VAT.',
+        'report.tooltip.col.costs_total' => 'Sum of Booked cost and To-book cost. Excl. VAT.',
         'report.tooltip.col.unposted_cost' => 'Unposted costs: Qty_to_Transfer_to_Journal × Unit_Cost_LCY from LVS_JobPlanningLinesSub, only for items with Costing_Method = Standard. Excl. VAT.',
         'report.tooltip.col.entered_obligations' => 'Registered purchase amounts (LVS_Registered_Purchases_Amt) from ProjectTaken for this cost group',
         'report.tooltip.col.invoiced_amount' => 'Amounts invoiced to the customer.',
@@ -489,9 +499,9 @@ const TRANSLATIONS = [
         'report.tooltip.exp.variance' => 'Difference between pre-calculation and EAC (PC Costs - EAC)',
         'report.tooltip.exp.order_result' => 'Contract value minus PC Costs',
         'report.tooltip.exp.ipr_result' => 'Installments received minus booked cost',
-        'report.tooltip.exp.poc_baseline' => 'Booked cost divided by PC Costs, as a percentage',
+        'report.tooltip.exp.poc_baseline' => 'Total cost (booked + to-book) divided by PC Costs, as a percentage',
         'report.tooltip.exp.poc_baseline_hours' => 'Booked hours divided by PC Hours, as a percentage',
-        'report.tooltip.exp.poc_eac' => 'Booked cost divided by EAC Costs, as a percentage',
+        'report.tooltip.exp.poc_eac' => 'Total cost (booked + to-book) divided by EAC Costs, as a percentage',
         'report.tooltip.exp.poc_eac_hours' => 'Booked hours divided by EAC Hours, as a percentage',
         'report.tooltip.exp.work_in_progress_profit' => 'Gross profit multiplied by POC EAC Costs',
         'report.termijn.empty' => 'No installment invoices found.',
@@ -688,8 +698,11 @@ const TRANSLATIONS = [
         'report.col.eac' => 'EAC Kosten',
         'report.col.booked_hours' => 'Gebuchte Stunden',
         'report.col.booked_cost' => 'Gebuchte Kosten',
+        'report.col.to_book_cost' => 'Zu buchende Kosten',
+        'report.col.costs_total' => 'Gesamtkosten',
         'report.col.unposted_cost' => 'Ungebuchte Kosten',
         'report.col.entered_obligations' => 'Erfasste Verpflichtungen',
+        'report.split_booked_to_book' => 'Gebucht + Zu buchen aufteilen',
         'report.col.invoiced_amount' => 'Fakturiert',
         'report.col.variance_budget_eac' => 'Abweichung VK - EAC',
         'report.tooltip.col.budget_cost' => 'Vorkalkulationskosten (LVS_Baseline_Total_Cost) aus ProjectTaken für diese Kostengruppe',
@@ -700,6 +713,8 @@ const TRANSLATIONS = [
         'report.tooltip.col.eac' => 'Estimate At Completion Kosten (KVT_EAC_Total_Unit_Cost) aus ProjectTaken für diese Kostengruppe',
         'report.tooltip.col.booked_hours' => 'Tatsächlich gebuchte Stunden bis heute (Job_Task_Lines.LVS_Used_Hours_Quantity) für diese Kostengruppe',
         'report.tooltip.col.booked_cost' => 'Tatsächlich gebuchte Kosten bis heute (JobLedgerEntries.Total_Cost_LCY). Exkl. MwSt.',
+        'report.tooltip.col.to_book_cost' => 'Reale Kosten, die noch nicht im Projektpostenbuch stehen: empfangene Einkäufe (Completely_Received / LVS_Completely_Received, Qty_Posted = 0) plus ungebuchte Standard-Artikel (Qty_to_Transfer_to_Journal × Unit_Cost_LCY). Kein Budget und keine offene Bestellung. Exkl. MwSt.',
+        'report.tooltip.col.costs_total' => 'Summe aus Gebuchten Kosten und Zu buchenden Kosten. Exkl. MwSt.',
         'report.tooltip.col.unposted_cost' => 'Ungebuchte Kosten: Qty_to_Transfer_to_Journal × Unit_Cost_LCY aus LVS_JobPlanningLinesSub, nur für Artikel mit Costing_Method = Standard. Exkl. MwSt.',
         'report.tooltip.col.entered_obligations' => 'Registrierte Einkaufsbeträge (LVS_Registered_Purchases_Amt) aus ProjectTaken für diese Kostengruppe',
         'report.tooltip.col.invoiced_amount' => 'An den Kunden fakturierte Beträge.',
@@ -739,9 +754,9 @@ const TRANSLATIONS = [
         'report.tooltip.exp.variance' => 'Unterschied zwischen Vorkalkulation und EAC (VK Kosten - EAC)',
         'report.tooltip.exp.order_result' => 'Vertragswert minus VK Kosten',
         'report.tooltip.exp.ipr_result' => 'Erhaltene Raten minus gebuchte Kosten',
-        'report.tooltip.exp.poc_baseline' => 'Gebuchte Kosten geteilt durch VK Kosten, als Prozentsatz',
+        'report.tooltip.exp.poc_baseline' => 'Gesamtkosten (gebucht + zu buchen) geteilt durch VK Kosten, als Prozentsatz',
         'report.tooltip.exp.poc_baseline_hours' => 'Gebuchte Stunden geteilt durch VK Stunden, als Prozentsatz',
-        'report.tooltip.exp.poc_eac' => 'Gebuchte Kosten geteilt durch EAC Kosten, als Prozentsatz',
+        'report.tooltip.exp.poc_eac' => 'Gesamtkosten (gebucht + zu buchen) geteilt durch EAC Kosten, als Prozentsatz',
         'report.tooltip.exp.poc_eac_hours' => 'Gebuchte Stunden geteilt durch EAC Stunden, als Prozentsatz',
         'report.tooltip.exp.work_in_progress_profit' => 'Bruttogewinn multipliziert mit POC EAC Kosten',
         'report.termijn.empty' => 'Keine Ratenrechnungen gefunden.',
@@ -936,8 +951,11 @@ const TRANSLATIONS = [
         'report.col.eac' => 'Coûts EAC',
         'report.col.booked_hours' => 'Heures comptabilisées',
         'report.col.booked_cost' => 'Coût comptabilisé',
+        'report.col.to_book_cost' => 'Coût à comptabiliser',
+        'report.col.costs_total' => 'Coût total',
         'report.col.unposted_cost' => 'Coût non comptabilisé',
         'report.col.entered_obligations' => 'Engagements saisis',
+        'report.split_booked_to_book' => 'Séparer comptabilisé + à comptabiliser',
         'report.col.invoiced_amount' => 'Facturé',
         'report.col.variance_budget_eac' => 'Écart VC - EAC',
         'report.tooltip.col.budget_cost' => 'Coûts de précalcul (LVS_Baseline_Total_Cost) depuis ProjectTaken pour ce groupe de coûts',
@@ -948,6 +966,8 @@ const TRANSLATIONS = [
         'report.tooltip.col.eac' => 'Coûts Estimate At Completion (KVT_EAC_Total_Unit_Cost) depuis ProjectTaken pour ce groupe de coûts',
         'report.tooltip.col.booked_hours' => 'Heures réellement comptabilisées à ce jour (Job_Task_Lines.LVS_Used_Hours_Quantity) pour ce groupe de coûts',
         'report.tooltip.col.booked_cost' => 'Coûts réellement comptabilisés à ce jour (JobLedgerEntries.Total_Cost_LCY). HT.',
+        'report.tooltip.col.to_book_cost' => 'Coûts réels pas encore au journal projet : achats réceptionnés (Completely_Received / LVS_Completely_Received, Qty_Posted = 0) plus articles Standard non comptabilisés (Qty_to_Transfer_to_Journal × Unit_Cost_LCY). Hors budget et hors commande ouverte. HT.',
+        'report.tooltip.col.costs_total' => 'Somme du coût comptabilisé et du coût à comptabiliser. HT.',
         'report.tooltip.col.unposted_cost' => 'Coûts non comptabilisés : Qty_to_Transfer_to_Journal × Unit_Cost_LCY depuis LVS_JobPlanningLinesSub, uniquement pour les articles avec Costing_Method = Standard. HT.',
         'report.tooltip.col.entered_obligations' => 'Montants d\'achats enregistrés (LVS_Registered_Purchases_Amt) depuis ProjectTaken pour ce groupe de coûts',
         'report.tooltip.col.invoiced_amount' => 'Montants facturés au client.',
@@ -987,9 +1007,9 @@ const TRANSLATIONS = [
         'report.tooltip.exp.variance' => 'Différence entre précalcul et EAC (Coûts VC - EAC)',
         'report.tooltip.exp.order_result' => 'Valeur du contrat moins Coûts VC',
         'report.tooltip.exp.ipr_result' => 'Acomptes reçus moins coûts comptabilisés',
-        'report.tooltip.exp.poc_baseline' => 'Coût comptabilisé divisé par les Coûts VC, en pourcentage',
+        'report.tooltip.exp.poc_baseline' => 'Coût total (comptabilisé + à comptabiliser) divisé par les Coûts VC, en pourcentage',
         'report.tooltip.exp.poc_baseline_hours' => 'Heures comptabilisées divisées par les Heures VC, en pourcentage',
-        'report.tooltip.exp.poc_eac' => 'Coût comptabilisé divisé par les Coûts EAC, en pourcentage',
+        'report.tooltip.exp.poc_eac' => 'Coût total (comptabilisé + à comptabiliser) divisé par les Coûts EAC, en pourcentage',
         'report.tooltip.exp.poc_eac_hours' => 'Heures comptabilisées divisées par les Heures EAC, en pourcentage',
         'report.tooltip.exp.work_in_progress_profit' => 'Marge brute multipliée par POC EAC Coûts',
         'report.termijn.empty' => 'Aucune facture d\'acompte trouvée.',
@@ -1050,11 +1070,11 @@ function loadUserPrefs(string $email): array
     return is_array($data) ? $data : [];
 }
 
-function saveUserPref(string $email, string $key, mixed $value): void
+function saveUserPref(string $email, string $key, mixed $value): bool
 {
     $path = getUserPrefsPath($email);
     if ($path === null) {
-        return;
+        return false;
     }
     $dir = dirname($path);
     if (!is_dir($dir)) {
@@ -1062,7 +1082,40 @@ function saveUserPref(string $email, string $key, mixed $value): void
     }
     $prefs = loadUserPrefs($email);
     $prefs[$key] = $value;
-    file_put_contents($path, json_encode($prefs, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+    $json = json_encode($prefs, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+    if (!is_string($json)) {
+        return false;
+    }
+
+    return file_put_contents($path, $json, LOCK_EX) !== false;
+}
+
+function getUserPref(string $email, string $key, mixed $default = null): mixed
+{
+    $prefs = loadUserPrefs($email);
+    return array_key_exists($key, $prefs) ? $prefs[$key] : $default;
+}
+
+function userPrefFlagEnabled(string $email, string $key, bool $default = true): bool
+{
+    if (!array_key_exists($key, loadUserPrefs($email))) {
+        return $default;
+    }
+
+    $value = getUserPref($email, $key, $default);
+    if (is_bool($value)) {
+        return $value;
+    }
+    if (is_int($value) || is_float($value)) {
+        return (int) $value === 1;
+    }
+
+    $normalized = strtolower(trim((string) $value));
+    if (in_array($normalized, ['0', 'false', 'off', 'no', 'nee'], true)) {
+        return false;
+    }
+
+    return $default ? $normalized !== '' : in_array($normalized, ['1', 'true', 'on', 'yes', 'ja'], true);
 }
 
 function getCurrentLanguage(): string
