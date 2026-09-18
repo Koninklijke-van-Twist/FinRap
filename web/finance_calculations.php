@@ -265,6 +265,47 @@ function finance_workorder_total_revenue(array $workorder): float
 }
 
 /**
+ * Berekent kolomwaarde Ontvangen termijnen voor één klantpost, excl. BTW.
+ *
+ * Sales_LCY is excl. BTW; Amount_LCY en Remaining_Amt_LCY zijn incl. BTW.
+ * Open facturen (Remaining = Amount) gaven met Sales − Remaining de BTW
+ * als negatief “ontvangen” (PRJ2607934: 21150 − 25591,50 = −4441,50).
+ * Formule: Sales_LCY × (Amount_LCY − Remaining_Amt_LCY) / Amount_LCY.
+ * Betalingen hebben Sales_LCY = 0 en tellen niet dubbel mee.
+ */
+function finance_column_installments_received_ledger_line(array $ledgerRow): float
+{
+    $salesLcy = finance_to_float($ledgerRow['Sales_LCY'] ?? 0.0);
+    $amountLcy = finance_to_float($ledgerRow['Amount_LCY'] ?? 0.0);
+    $remainingLcy = finance_to_float($ledgerRow['Remaining_Amt_LCY'] ?? 0.0);
+
+    if (abs($amountLcy) < 0.000001) {
+        return 0.0;
+    }
+
+    return $salesLcy * (($amountLcy - $remainingLcy) / $amountLcy);
+}
+
+/**
+ * Berekent kolomwaarde Ontvangen termijnen als som van ontvangen excl. BTW
+ * over alle Customer_Ledger_Entries van het project.
+ */
+function finance_column_installments_received(array $customerLedgerRows): float
+{
+    $total = 0.0;
+
+    foreach ($customerLedgerRows as $ledgerRow) {
+        if (!is_array($ledgerRow)) {
+            continue;
+        }
+
+        $total = finance_add_amount($total, finance_column_installments_received_ledger_line($ledgerRow));
+    }
+
+    return $total;
+}
+
+/**
  * Geeft de Type-waarden terug die BC OData kan gebruiken voor de G/L-omzetrekening.
  * Dezelfde option-field komt als Nederlandse caption, Engelse caption of enum-naam.
  */
@@ -294,6 +335,14 @@ function finance_revenue_gl_account_type_odata_filter(string $fieldName = 'Type'
     }
 
     return '(' . implode(' or ', $parts) . ')';
+}
+
+/**
+ * Geeft het Type-label voor UI-tooltips: Nederlandse én Engelse G/L-caption.
+ */
+function finance_revenue_gl_account_type_label(): string
+{
+    return FINANCE_REVENUE_GL_ACCOUNT_TYPE . ' / G/L Account';
 }
 
 /**

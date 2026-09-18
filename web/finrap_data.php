@@ -3737,18 +3737,7 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
     $termijnLines = finrap_enrich_termijn_lines_with_customer_ledger($termijnLines, $customerRows);
     $modal['termijn_lines'] = $termijnLines;
 
-    foreach ($customerRows as $customerRow) {
-        if (!is_array($customerRow)) {
-            continue;
-        }
-
-        $receivedAmount = finance_to_float($customerRow['Sales_LCY'] ?? 0.0)
-            - finance_to_float($customerRow['Remaining_Amt_LCY'] ?? 0.0);
-        $modal['installments_received'] = finance_add_amount(
-            (float) ($modal['installments_received'] ?? 0.0),
-            $receivedAmount
-        );
-    }
+    $modal['installments_received'] = finance_column_installments_received($customerRows);
 
     try {
         $taskUrl = finrap_company_entity_url_with_query($baseUrl, $environment, $company, 'ProjectenJobTaskLines', [
