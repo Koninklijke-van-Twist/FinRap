@@ -265,9 +265,58 @@ function finance_workorder_total_revenue(array $workorder): float
 }
 
 /**
+ * Geeft de Type-waarden terug die BC OData kan gebruiken voor de G/L-omzetrekening.
+ * Dezelfde option-field komt als Nederlandse caption, Engelse caption of enum-naam.
+ */
+function finance_revenue_gl_account_type_odata_values(): array
+{
+    return [
+        FINANCE_REVENUE_GL_ACCOUNT_TYPE,
+        'G/L Account',
+        'GLAccount',
+    ];
+}
+
+/**
+ * Bouwt een OData Type-filter dat Nederlandse en Engelse G/L-rekeningwaarden accepteert.
+ */
+function finance_revenue_gl_account_type_odata_filter(string $fieldName = 'Type'): string
+{
+    $field = trim($fieldName);
+    if ($field === '') {
+        $field = 'Type';
+    }
+
+    $parts = [];
+    foreach (finance_revenue_gl_account_type_odata_values() as $value) {
+        $escaped = str_replace("'", "''", (string) $value);
+        $parts[] = $field . " eq '" . $escaped . "'";
+    }
+
+    return '(' . implode(' or ', $parts) . ')';
+}
+
+/**
+ * Bepaalt of Type een G/L-/grootboekrekening aanduidt.
+ * Accepteert NL `GB-rekening` en EN `G/L Account` / `GLAccount` (case-insensitive,
+ * spaties/streepjes/slashes genegeerd). Lege waarden tellen niet mee.
+ */
+function finance_is_revenue_gl_account_type(string $type): bool
+{
+    $token = strtolower(trim($type));
+    if ($token === '') {
+        return false;
+    }
+
+    $token = str_replace([' ', '_', '-', '/', '\\'], '', $token);
+
+    return in_array($token, ['gbrekening', 'glaccount', 'glrekening', 'grootboekrekening'], true);
+}
+
+/**
  * Bepaalt of een BC-projectplanningsregel (Job Planning Line / JobBaselineLines /
  * FactureerbareProjectPlanningsRegels) meetelt voor aanneemsom/omzet.
- * Alleen G/L-omzetrekening Type = GB-rekening en No = 800000 telt mee;
+ * Alleen G/L-omzetrekening Type = GB-rekening / G/L Account en No = 800000 telt mee;
  * resource-/artikelboekingen op dezelfde planning blijven buiten deze som.
  */
 function finance_is_revenue_gl_account_line(array $row): bool
@@ -275,7 +324,7 @@ function finance_is_revenue_gl_account_line(array $row): bool
     $type = trim((string) ($row['Type'] ?? ''));
     $no = trim((string) ($row['No'] ?? ''));
 
-    return strcasecmp($type, FINANCE_REVENUE_GL_ACCOUNT_TYPE) === 0
+    return finance_is_revenue_gl_account_type($type)
         && $no === FINANCE_REVENUE_GL_ACCOUNT_NO;
 }
 
