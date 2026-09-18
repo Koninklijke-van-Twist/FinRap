@@ -1,10 +1,11 @@
 <?php
 
 /**
- * Mapping and select coverage for termijn Description_2 (Omschrijving 2).
+ * Mapping and termijn card rendering for Description_2 (Omschrijving 2).
  * Run: php web/tests/test_termijn_description_2.php
  */
 
+require_once dirname(__DIR__) . '/localization.php';
 require_once dirname(__DIR__) . '/finrap_data.php';
 
 $failures = 0;
@@ -47,22 +48,33 @@ test_assert('whitespace-only Description_2 is empty', finrap_map_termijn_line_fr
     FINRAP_BILLABLE_PLANNING_AMOUNT_FIELD => 1,
 ])['description_2'] === '');
 
-$selectSource = file_get_contents(dirname(__DIR__) . '/finrap_data.php');
 test_assert(
-    'billable planning $select includes Description_2',
-    is_string($selectSource) && str_contains($selectSource, 'Description,Description_2,Document_No')
+    'billable planning select includes Description_2',
+    str_contains(finrap_billable_planning_select(), 'Description,Description_2,Document_No')
 );
 
-$uiSource = file_get_contents(dirname(__DIR__) . '/finrap.php');
+$ariaLabel = LOC('report.termijn.description_2');
+$rendered = finrap_render_termijn_description_2_html($mapped['description_2'], $ariaLabel);
+test_assert('non-empty render includes termijn-description-2', str_contains($rendered, 'class="termijn-description-2"'));
 test_assert(
-    'card renders description_2 under dates',
-    is_string($uiSource)
-        && str_contains($uiSource, 'termijn-description-2')
-        && str_contains($uiSource, "termijnLine['description_2']")
+    'non-empty render includes aria-label',
+    str_contains($rendered, 'aria-label="' . htmlspecialchars($ariaLabel, ENT_QUOTES) . '"')
 );
+test_assert('non-empty render includes escaped value', str_contains($rendered, 'Voorschot engineering'));
+
+$unsafeMapped = finrap_map_termijn_line_from_planning_row([
+    'Description_2' => 'Foo <script>alert(1)</script>',
+    FINRAP_BILLABLE_PLANNING_AMOUNT_FIELD => 1,
+]);
+$escapedRendered = finrap_render_termijn_description_2_html($unsafeMapped['description_2'], $ariaLabel);
+test_assert('rendered value is escaped', str_contains($escapedRendered, 'Foo &lt;script&gt;alert(1)&lt;/script&gt;'));
+test_assert('rendered value has no raw script tag', !str_contains($escapedRendered, '<script>'));
+
+$emptyRendered = finrap_render_termijn_description_2_html($emptyMapped['description_2'], $ariaLabel);
+test_assert('empty Description_2 omits the element', $emptyRendered === '');
 test_assert(
-    'empty Description_2 is not rendered',
-    is_string($uiSource) && str_contains($uiSource, '$termijnDescription2 !== \'\'')
+    'whitespace Description_2 omits the element',
+    finrap_render_termijn_description_2_html("  \t", $ariaLabel) === ''
 );
 
 if ($failures > 0) {

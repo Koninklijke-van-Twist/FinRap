@@ -2428,9 +2428,11 @@ $finrapReportId = $reportId;
                                                         <?php endif; ?>
                                                     </div>
                                                     <?php endif; ?>
-                                                    <?php if ($termijnDescription2 !== ''): ?>
-                                                    <div class="termijn-description-2" aria-label="<?= htmlspecialchars(LOC('report.termijn.description_2'), ENT_QUOTES) ?>"><?= finrap_render_value_with_tooltip_html(htmlspecialchars($termijnDescription2), $tooltipTermijnDescription2) ?></div>
-                                                    <?php endif; ?>
+                                                    <?= finrap_render_termijn_description_2_html(
+                                                        $termijnDescription2,
+                                                        LOC('report.termijn.description_2'),
+                                                        finrap_render_value_with_tooltip_html(htmlspecialchars($termijnDescription2), $tooltipTermijnDescription2)
+                                                    ) ?>
                                                     </div>
                                                     <?php if ($termijnLedgerDescription !== ''): ?>
                                                     <span class="termijn-ledger-description"><?= finrap_render_value_with_tooltip_html(htmlspecialchars($termijnLedgerDescription), $tooltipTermijnLedgerDescription) ?></span>
