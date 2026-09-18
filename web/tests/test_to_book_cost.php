@@ -122,6 +122,197 @@ test_assert_float(
     finance_column_poc_cost_progress(100.0, 90.0)
 );
 
+test_assert_float(
+    'missing Qty_Posted is not treated as zero',
+    0.0,
+    finance_column_received_not_posted_line(true, null, 800.0)
+);
+test_assert(
+    'explicit Qty_Posted 0 still counts as te boeken',
+    abs(finance_column_received_not_posted_line(true, 0.0, 800.0) - 800.0) < 0.000001
+);
+test_assert(
+    'resolve qty posted prefers row value',
+    finance_column_resolve_qty_posted(0.0, 4.0) === 0.0
+);
+test_assert(
+    'resolve qty posted uses lookup when row missing',
+    finance_column_resolve_qty_posted(null, 0.0) === 0.0
+);
+test_assert(
+    'resolve qty posted stays unknown without row or lookup',
+    finance_column_resolve_qty_posted(null, null) === null
+);
+
+test_assert(
+    'empty ledger may apply received-not-posted',
+    finance_column_received_not_posted_allowed(false, false)
+);
+test_assert(
+    'ledger with Type may apply received-not-posted',
+    finance_column_received_not_posted_allowed(true, true)
+);
+test_assert(
+    'ledger without Type must skip received-not-posted',
+    !finance_column_received_not_posted_allowed(true, false)
+);
+
+require_once dirname(__DIR__) . '/finrap_data.php';
+
+$countedKeys = [];
+$purchaseByTask = finrap_parse_received_not_posted_by_task(
+    [
+        [
+            'Job_Task_No' => '001-000-000',
+            'No' => 'ITEM-A',
+            'Completely_Received' => true,
+            'Qty_Posted' => 0,
+            'Quantity_Received' => 1,
+            'Direct_Unit_Cost' => 100.0,
+        ],
+        [
+            'Job_Task_No' => '001-000-000',
+            'No' => 'ITEM-A',
+            'Completely_Received' => true,
+            'Qty_Posted' => 0,
+            'Quantity_Received' => 1,
+            'Direct_Unit_Cost' => 40.0,
+        ],
+    ],
+    [],
+    $countedKeys,
+    false
+);
+test_assert_float(
+    'two purchase rows same task+item without line id are both counted',
+    140.0,
+    finance_to_float($purchaseByTask['001-000-000'] ?? 0.0)
+);
+
+$planningByTask = finrap_parse_received_not_posted_by_task(
+    [
+        [
+            'Job_Task_No' => '001-000-000',
+            'No' => 'ITEM-A',
+            'Completely_Received' => true,
+            'Qty_Posted' => 0,
+            'Quantity_Received' => 1,
+            'Direct_Unit_Cost' => 99.0,
+        ],
+    ],
+    [],
+    $countedKeys,
+    true
+);
+test_assert_float(
+    'planning row with same task+item is suppressed after purchase',
+    0.0,
+    finance_to_float($planningByTask['001-000-000'] ?? 0.0)
+);
+
+$missingQtyByTask = finrap_parse_received_not_posted_by_task(
+    [
+        [
+            'Job_Task_No' => '002-000-000',
+            'No' => 'ITEM-B',
+            'Completely_Received' => true,
+            'Quantity_Received' => 2,
+            'Direct_Unit_Cost' => 50.0,
+        ],
+    ],
+    [],
+    $unusedCounted
+);
+test_assert_float(
+    'purchase row without Qty_Posted and without lookup is excluded',
+    0.0,
+    finance_to_float($missingQtyByTask['002-000-000'] ?? 0.0)
+);
+
+$lookupQtyByTask = finrap_parse_received_not_posted_by_task(
+    [
+        [
+            'Job_Task_No' => '002-000-000',
+            'No' => 'ITEM-B',
+            'Completely_Received' => true,
+            'Quantity_Received' => 2,
+            'Direct_Unit_Cost' => 50.0,
+        ],
+    ],
+    ['002-000-000|item-b' => 0.0],
+    $unusedCounted2
+);
+test_assert_float(
+    'missing Qty_Posted uses planning lookup of 0 and counts',
+    100.0,
+    finance_to_float($lookupQtyByTask['002-000-000'] ?? 0.0)
+);
+
+$taskRowsNoType = [
+    '001-000-000' => [
+        'Is_Total_Row' => false,
+        'Booked_Cost' => 1500.0,
+        'Unposted_Cost' => 10.0,
+    ],
+];
+finrap_apply_to_book_costs_to_task_rows(
+    $taskRowsNoType,
+    ['001-000-000' => 10.0],
+    ['001-000-000' => 1500.0],
+    [],
+    finance_column_received_not_posted_allowed(true, false)
+);
+test_assert_float(
+    'ledger without Type skips received-not-posted and keeps unposted',
+    10.0,
+    finance_to_float($taskRowsNoType['001-000-000']['To_Book_Cost'] ?? 0.0)
+);
+test_assert_float(
+    'ledger without Type does not inflate totale with received',
+    1510.0,
+    finance_to_float($taskRowsNoType['001-000-000']['Costs_Total'] ?? 0.0)
+);
+
+$taskRowsEmptyLedger = [
+    '001-000-000' => [
+        'Is_Total_Row' => false,
+        'Booked_Cost' => 0.0,
+        'Unposted_Cost' => 0.0,
+    ],
+];
+finrap_apply_to_book_costs_to_task_rows(
+    $taskRowsEmptyLedger,
+    ['001-000-000' => 0.0],
+    ['001-000-000' => 420.50],
+    [],
+    finance_column_received_not_posted_allowed(false, false)
+);
+test_assert_float(
+    'empty ledger still applies received-not-posted',
+    420.50,
+    finance_to_float($taskRowsEmptyLedger['001-000-000']['To_Book_Cost'] ?? 0.0)
+);
+
+$taskRowsTyped = [
+    '001-000-000' => [
+        'Is_Total_Row' => false,
+        'Booked_Cost' => 1500.0,
+        'Unposted_Cost' => 0.0,
+    ],
+];
+finrap_apply_to_book_costs_to_task_rows(
+    $taskRowsTyped,
+    ['001-000-000' => 0.0],
+    ['001-000-000' => 1500.0],
+    ['001-000-000' => 1500.0],
+    finance_column_received_not_posted_allowed(true, true)
+);
+test_assert_float(
+    'typed ledger purchase cap keeps received out of te boeken',
+    0.0,
+    finance_to_float($taskRowsTyped['001-000-000']['To_Book_Cost'] ?? 0.0)
+);
+
 if ($failures > 0) {
     echo "\n{$failures} test(s) failed.\n";
     exit(1);

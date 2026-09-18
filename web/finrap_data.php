@@ -3158,17 +3158,34 @@ function finrap_row_purchase_received_amount(array $row): float
     );
 }
 
+function finrap_received_line_identifier(array $row): string
+{
+    return strtolower(trim((string) ($row['Line_No'] ?? $row['Document_No'] ?? '')));
+}
+
 function finrap_received_line_dedupe_key(array $row): string
 {
     $taskNo = strtolower(trim((string) ($row['Job_Task_No'] ?? '')));
     $itemNo = strtolower(trim((string) ($row['No'] ?? '')));
-    $lineNo = strtolower(trim((string) ($row['Line_No'] ?? $row['Document_No'] ?? '')));
 
-    return $taskNo . '|' . $itemNo . '|' . $lineNo;
+    return $taskNo . '|' . $itemNo . '|' . finrap_received_line_identifier($row);
 }
 
-function finrap_parse_received_not_posted_by_task(array $sourceRows, array $qtyPostedByItemTask = [], ?array &$countedKeys = null): array
+function finrap_row_qty_posted(array $row): ?float
 {
+    if (!array_key_exists('Qty_Posted', $row) || $row['Qty_Posted'] === null || $row['Qty_Posted'] === '') {
+        return null;
+    }
+
+    return finance_to_float($row['Qty_Posted']);
+}
+
+function finrap_parse_received_not_posted_by_task(
+    array $sourceRows,
+    array $qtyPostedByItemTask = [],
+    ?array &$countedKeys = null,
+    bool $suppressDuplicateItemTask = false
+): array {
     if (!is_array($countedKeys)) {
         $countedKeys = [];
     }
@@ -3185,13 +3202,17 @@ function finrap_parse_received_not_posted_by_task(array $sourceRows, array $qtyP
         }
 
         $itemNo = trim((string) ($row['No'] ?? ''));
-        $qtyPosted = finance_to_float($row['Qty_Posted'] ?? 0.0);
-        if (abs($qtyPosted) < 0.000001 && $itemNo !== '') {
+        $lookupQtyPosted = null;
+        if ($itemNo !== '') {
             $postedLookupKey = strtolower($taskNo) . '|' . strtolower($itemNo);
-            if (isset($qtyPostedByItemTask[$postedLookupKey])) {
-                $qtyPosted = finance_to_float($qtyPostedByItemTask[$postedLookupKey]);
+            if (array_key_exists($postedLookupKey, $qtyPostedByItemTask)) {
+                $lookupQtyPosted = finance_to_float($qtyPostedByItemTask[$postedLookupKey]);
             }
         }
+        $qtyPosted = finance_column_resolve_qty_posted(
+            finrap_row_qty_posted($row),
+            $lookupQtyPosted
+        );
 
         $lineAmount = finance_column_received_not_posted_line(
             finrap_row_completely_received_flag($row),
@@ -3202,15 +3223,16 @@ function finrap_parse_received_not_posted_by_task(array $sourceRows, array $qtyP
             continue;
         }
 
+        $lineId = finrap_received_line_identifier($row);
         $dedupeKey = finrap_received_line_dedupe_key($row);
         $itemTaskKey = $itemNo !== '' ? strtolower($taskNo) . '|' . strtolower($itemNo) : '';
-        if ($dedupeKey !== '||' && isset($countedKeys[$dedupeKey])) {
+        if ($lineId !== '' && isset($countedKeys[$dedupeKey])) {
             continue;
         }
-        if ($itemTaskKey !== '' && isset($countedKeys['item:' . $itemTaskKey])) {
+        if ($suppressDuplicateItemTask && $itemTaskKey !== '' && isset($countedKeys['item:' . $itemTaskKey])) {
             continue;
         }
-        if ($dedupeKey !== '||') {
+        if ($lineId !== '') {
             $countedKeys[$dedupeKey] = true;
         }
         if ($itemTaskKey !== '') {
@@ -3232,7 +3254,7 @@ function finrap_parse_qty_posted_by_item_task(array $planningRows): array
     $lookup = [];
 
     foreach ($planningRows as $planningRow) {
-        if (!is_array($planningRow) || !array_key_exists('Qty_Posted', $planningRow)) {
+        if (!is_array($planningRow) || finrap_row_qty_posted($planningRow) === null) {
             continue;
         }
 
@@ -3248,21 +3270,35 @@ function finrap_parse_qty_posted_by_item_task(array $planningRows): array
     return $lookup;
 }
 
-function finrap_parse_booked_purchase_costs_by_task(array $ledgerRows): array
+function finrap_ledger_rows_have_entries(array $ledgerRows): bool
 {
-    $hasType = false;
+    foreach ($ledgerRows as $ledgerRow) {
+        if (is_array($ledgerRow)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function finrap_ledger_rows_have_type(array $ledgerRows): bool
+{
     foreach ($ledgerRows as $ledgerRow) {
         if (!is_array($ledgerRow)) {
             continue;
         }
 
         if (trim((string) ($ledgerRow['Type'] ?? '')) !== '') {
-            $hasType = true;
-            break;
+            return true;
         }
     }
 
-    if (!$hasType) {
+    return false;
+}
+
+function finrap_parse_booked_purchase_costs_by_task(array $ledgerRows): array
+{
+    if (!finrap_ledger_rows_have_type($ledgerRows)) {
         return [];
     }
 
@@ -3314,18 +3350,26 @@ function finrap_with_derived_cost_totals(array $metrics): array
     return $metrics;
 }
 
-function finrap_apply_to_book_costs_to_task_rows(array &$taskRowsByKey, array $unpostedByTask, array $receivedNotPostedByTask, array $bookedPurchaseByTask): void
-{
+function finrap_apply_to_book_costs_to_task_rows(
+    array &$taskRowsByKey,
+    array $unpostedByTask,
+    array $receivedNotPostedByTask,
+    array $bookedPurchaseByTask,
+    bool $applyReceivedNotPosted = true
+): void {
     foreach ($taskRowsByKey as $taskKey => &$taskRow) {
         if (!is_array($taskRow) || (bool) ($taskRow['Is_Total_Row'] ?? false)) {
             continue;
         }
 
         $unpostedCost = finance_to_float($unpostedByTask[$taskKey] ?? $taskRow['Unposted_Cost'] ?? 0.0);
-        $receivedNotPosted = finance_column_received_not_posted_capped(
-            finance_to_float($receivedNotPostedByTask[$taskKey] ?? 0.0),
-            finance_to_float($bookedPurchaseByTask[$taskKey] ?? 0.0)
-        );
+        $receivedNotPosted = 0.0;
+        if ($applyReceivedNotPosted) {
+            $receivedNotPosted = finance_column_received_not_posted_capped(
+                finance_to_float($receivedNotPostedByTask[$taskKey] ?? 0.0),
+                finance_to_float($bookedPurchaseByTask[$taskKey] ?? 0.0)
+            );
+        }
         $taskRow['Unposted_Cost'] = $unpostedCost;
         $taskRow['To_Book_Cost'] = finance_column_to_book_cost($unpostedCost, $receivedNotPosted);
         $taskRow['Costs_Total'] = finance_column_costs_total(
@@ -4219,7 +4263,8 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
     $receivedNotPostedByTask = finrap_parse_received_not_posted_by_task(
         $purchaseRows,
         $qtyPostedByItemTask,
-        $receivedCountedKeys
+        $receivedCountedKeys,
+        false
     );
     $planningReceivedSourceRows = [];
     foreach ($planningRows as $planningRow) {
@@ -4237,15 +4282,22 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
     $planningReceivedByTask = finrap_parse_received_not_posted_by_task(
         $planningReceivedSourceRows,
         $qtyPostedByItemTask,
-        $receivedCountedKeys
+        $receivedCountedKeys,
+        true
     );
     $receivedNotPostedByTask = finrap_merge_amount_maps($receivedNotPostedByTask, $planningReceivedByTask);
-    $bookedPurchaseByTask = finrap_parse_booked_purchase_costs_by_task($ledgerRows);
+    $ledgerHasEntries = finrap_ledger_rows_have_entries($ledgerRows);
+    $ledgerHasType = finrap_ledger_rows_have_type($ledgerRows);
+    $applyReceivedNotPosted = finance_column_received_not_posted_allowed($ledgerHasEntries, $ledgerHasType);
+    $bookedPurchaseByTask = $ledgerHasType
+        ? finrap_parse_booked_purchase_costs_by_task($ledgerRows)
+        : [];
     finrap_apply_to_book_costs_to_task_rows(
         $taskRowsByKey,
         $unpostedCostsByTask,
         $receivedNotPostedByTask,
-        $bookedPurchaseByTask
+        $bookedPurchaseByTask,
+        $applyReceivedNotPosted
     );
 
     $baselineAmountsByTask = finrap_parse_baseline_amounts_by_task($baselineRows, array_keys($taskRowsByKey));

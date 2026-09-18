@@ -481,16 +481,21 @@ function finance_column_purchase_received_amount(
 
 /**
  * Berekent te-boeken ontvangen kosten voor één inkoop-/ontvangstregel:
- * alleen Completely_Received (of LVS-equivalent) én Qty_Posted = 0.
+ * alleen Completely_Received (of LVS-equivalent) én Qty_Posted aanwezig en 0.
+ * Ontbrekende Qty_Posted wordt niet als 0 behandeld (geen aanname “niet geboekt”).
  * Openstaande PO en budgetregels vallen hier buiten.
  */
 function finance_column_received_not_posted_line(
     mixed $completelyReceivedFlag,
-    float $qtyPosted,
+    ?float $qtyPosted,
     float $receivedAmount
 ): float
 {
     if (!finance_odata_flag_is_true($completelyReceivedFlag)) {
+        return 0.0;
+    }
+
+    if ($qtyPosted === null) {
         return 0.0;
     }
 
@@ -499,6 +504,32 @@ function finance_column_received_not_posted_line(
     }
 
     return finance_to_float($receivedAmount);
+}
+
+/**
+ * Kiest Qty_Posted: de regelwaarde wint; anders de planning-lookup; anders onbekend (null).
+ */
+function finance_column_resolve_qty_posted(?float $rowQtyPosted, ?float $lookupQtyPosted): ?float
+{
+    if ($rowQtyPosted !== null) {
+        return $rowQtyPosted;
+    }
+
+    return $lookupQtyPosted;
+}
+
+/**
+ * Mag ontvangen-niet-geboekt in Te boeken? Alleen bij lege ledger, of als ledger Type
+ * beschikbaar is om inkoop te cap'en. Bestaande ledgerregels zonder Type: skip
+ * (voorkomt dubbeltelling in Geboekt én Te boeken).
+ */
+function finance_column_received_not_posted_allowed(bool $ledgerHasEntries, bool $ledgerHasType): bool
+{
+    if (!$ledgerHasEntries) {
+        return true;
+    }
+
+    return $ledgerHasType;
 }
 
 /**
