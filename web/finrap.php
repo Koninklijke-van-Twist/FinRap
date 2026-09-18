@@ -879,6 +879,9 @@ $tooltipTermijnDocumentNo = finrap_tooltip_formula_html([
 $tooltipTermijnDescription = finrap_tooltip_formula_html([
     ['type' => 'ref', 'table' => 'FactureerbareProjectPlanningsRegels', 'field' => 'Description'],
 ]);
+$tooltipTermijnDescription2 = finrap_tooltip_formula_html([
+    ['type' => 'ref', 'table' => 'FactureerbareProjectPlanningsRegels', 'field' => 'Description_2'],
+]);
 $tooltipTermijnPlanningDate = finrap_tooltip_formula_html([
     ['type' => 'ref', 'table' => 'FactureerbareProjectPlanningsRegels', 'field' => 'Planning_Date'],
 ]);
@@ -1834,6 +1837,20 @@ $finrapReportId = $reportId;
             .termijn-item {
                 display: contents !important;
             }
+
+            .termijn-footer,
+            .termijn-footer-left,
+            .termijn-description-2,
+            .termijn-ledger-description {
+                min-width: 0 !important;
+                max-width: 100%;
+            }
+
+            .termijn-description-2 {
+                white-space: normal !important;
+                overflow-wrap: anywhere;
+                word-break: break-word;
+            }
         }
 
         .analytics-blocks-section {
@@ -1971,14 +1988,34 @@ $finrapReportId = $reportId;
             padding-bottom: 3px;
         }
 
+        .termijn-footer-left {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 2px;
+            flex: 1 1 auto;
+            min-width: 0;
+            max-width: 100%;
+        }
+
         .termijn-meta-dates {
             display: flex;
             flex-wrap: wrap;
             gap: 4px 12px;
             font-size: 10px;
             color: #475569;
-            flex: 1 1 auto;
-            min-width: 70%;
+            min-width: 0;
+            max-width: 100%;
+        }
+
+        .termijn-description-2 {
+            font-size: 10px;
+            color: #475569;
+            white-space: normal;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+            min-width: 0;
+            max-width: 100%;
         }
 
         .termijn-meta-date {
@@ -2351,6 +2388,7 @@ $finrapReportId = $reportId;
                                                 ? 'termijn-status--paid'
                                                 : ($termijnStatusKey === 'invoiced' ? 'termijn-status--invoiced' : '');
                                             $termijnLedgerDescription = trim((string) ($termijnLine['ledger_description'] ?? ''));
+                                            $termijnDescription2 = trim((string) ($termijnLine['description_2'] ?? ''));
                                             $hasLedgerMatch = $termijnStatusKey !== 'not_invoiced';
                                             $termijnPlanningDateRaw = trim((string) ($termijnLine['planning_date'] ?? ''));
                                             $termijnPlanningDate = finrap_format_date_display($termijnPlanningDateRaw);
@@ -2364,7 +2402,7 @@ $finrapReportId = $reportId;
                                                 || $termijnDueDate !== ''
                                                 || $termijnClosedDate !== ''
                                                 || $showPlannedDate;
-                                            $hasFooter = $hasMetaDates || $termijnLedgerDescription !== '';
+                                            $hasFooter = $hasMetaDates || $termijnLedgerDescription !== '' || $termijnDescription2 !== '';
                                             ?>
                                             <li class="termijn-item<?= $termijnUsesDescriptionFallback ? ' termijn-item--wide-document' : '' ?>">
                                                 <div class="termijn-separator" aria-hidden="true"></div>
@@ -2373,6 +2411,7 @@ $finrapReportId = $reportId;
                                                 <span class="termijn-amount"><?= finrap_render_value_with_tooltip_html(htmlspecialchars(finrap_format_currency($termijnAmount)), $tooltipTermijnAmount) ?></span>
                                                 <?php if ($hasFooter): ?>
                                                 <div class="termijn-footer">
+                                                    <div class="termijn-footer-left">
                                                     <?php if ($hasMetaDates): ?>
                                                     <div class="termijn-meta-dates">
                                                         <?php if ($showPlannedDate): ?>
@@ -2388,9 +2427,13 @@ $finrapReportId = $reportId;
                                                         <span class="termijn-meta-date"><?= finrap_render_value_with_tooltip_html(htmlspecialchars(LOC('report.termijn.date.paid') . ': ' . $termijnClosedDate), $tooltipTermijnClosedDate) ?></span>
                                                         <?php endif; ?>
                                                     </div>
-                                                    <?php else: ?>
-                                                    <div class="termijn-meta-dates"></div>
                                                     <?php endif; ?>
+                                                    <?= finrap_render_termijn_description_2_html(
+                                                        $termijnDescription2,
+                                                        LOC('report.termijn.description_2'),
+                                                        finrap_render_value_with_tooltip_html(htmlspecialchars($termijnDescription2), $tooltipTermijnDescription2)
+                                                    ) ?>
+                                                    </div>
                                                     <?php if ($termijnLedgerDescription !== ''): ?>
                                                     <span class="termijn-ledger-description"><?= finrap_render_value_with_tooltip_html(htmlspecialchars($termijnLedgerDescription), $tooltipTermijnLedgerDescription) ?></span>
                                                     <?php endif; ?>

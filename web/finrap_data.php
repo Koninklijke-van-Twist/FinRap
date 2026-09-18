@@ -1899,6 +1899,46 @@ function finrap_enrich_termijn_lines_with_customer_ledger(array $termijnLines, a
     return $termijnLines;
 }
 
+function finrap_map_termijn_line_from_planning_row(array $contractRow): array
+{
+    return [
+        'line_no' => (int) ($contractRow['Line_No'] ?? 0),
+        'document_no' => trim((string) ($contractRow['Document_No'] ?? '')),
+        'description' => trim((string) ($contractRow['Description'] ?? '')),
+        'description_2' => trim((string) ($contractRow['Description_2'] ?? '')),
+        'change_order_no' => trim((string) ($contractRow[FINRAP_PROJECT_TASK_CHANGE_ORDER_FIELD] ?? '')),
+        'amount' => finance_to_float($contractRow[FINRAP_BILLABLE_PLANNING_AMOUNT_FIELD] ?? 0.0),
+        'planning_date' => (string) ($contractRow['Planning_Date'] ?? ''),
+        'invoiced_amount' => finance_to_float($contractRow[FINRAP_BILLABLE_PLANNING_INVOICED_FIELD] ?? 0.0),
+    ];
+}
+
+function finrap_billable_planning_select(): string
+{
+    return 'Job_No,Line_No,Line_Type,Job_Task_No,Type,No,Description,Description_2,Document_No,'
+        . FINRAP_BILLABLE_PLANNING_AMOUNT_FIELD
+        . ',Qty_Invoiced,Planning_Date,'
+        . FINRAP_BILLABLE_PLANNING_INVOICED_FIELD
+        . ',LVS_Document_Status,'
+        . FINRAP_PROJECT_TASK_CHANGE_ORDER_FIELD;
+}
+
+function finrap_render_termijn_description_2_html(string $description2, string $ariaLabel, string $innerHtml = ''): string
+{
+    $value = trim($description2);
+    if ($value === '') {
+        return '';
+    }
+
+    if ($innerHtml === '') {
+        $innerHtml = htmlspecialchars($value);
+    }
+
+    return '<div class="termijn-description-2" aria-label="'
+        . htmlspecialchars($ariaLabel, ENT_QUOTES)
+        . '">' . $innerHtml . '</div>';
+}
+
 function finrap_sort_termijn_lines_by_change_order(array $termijnLines): array
 {
     usort($termijnLines, static function (array $left, array $right): int {
@@ -3995,12 +4035,7 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
     $changeOrderByTask = finrap_parse_project_task_change_orders_by_task($projectTaskRows, $projectNo);
 
     $escapedRevenueNo = str_replace("'", "''", FINRAP_BUDGET_REVENUE_NO);
-    $billablePlanningSelect = 'Job_No,Line_No,Line_Type,Job_Task_No,Type,No,Description,Document_No,'
-        . FINRAP_BILLABLE_PLANNING_AMOUNT_FIELD
-        . ',Qty_Invoiced,Planning_Date,'
-        . FINRAP_BILLABLE_PLANNING_INVOICED_FIELD
-        . ',LVS_Document_Status,'
-        . FINRAP_PROJECT_TASK_CHANGE_ORDER_FIELD;
+    $billablePlanningSelect = finrap_billable_planning_select();
     $billablePlanningFilter = $projectFilter
         . ' and ' . finance_revenue_gl_account_type_odata_filter()
         . " and No eq '" . $escapedRevenueNo . "'";
@@ -4054,15 +4089,7 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
             continue;
         }
 
-        $termijnLines[] = [
-            'line_no' => (int) ($contractRow['Line_No'] ?? 0),
-            'document_no' => trim((string) ($contractRow['Document_No'] ?? '')),
-            'description' => trim((string) ($contractRow['Description'] ?? '')),
-            'change_order_no' => trim((string) ($contractRow[FINRAP_PROJECT_TASK_CHANGE_ORDER_FIELD] ?? '')),
-            'amount' => finance_to_float($contractRow[FINRAP_BILLABLE_PLANNING_AMOUNT_FIELD] ?? 0.0),
-            'planning_date' => (string) ($contractRow['Planning_Date'] ?? ''),
-            'invoiced_amount' => finance_to_float($contractRow[FINRAP_BILLABLE_PLANNING_INVOICED_FIELD] ?? 0.0),
-        ];
+        $termijnLines[] = finrap_map_termijn_line_from_planning_row($contractRow);
     }
 
     $termijnLines = array_values(array_filter($termijnLines, static function (array $termijnLine): bool {
