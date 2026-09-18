@@ -5,7 +5,7 @@ web/cache/
 
 BC Webservices.txt
 
-data/user_prefs/
+web/data/user_prefs/
 
 web/analytics/analytics.sqlite
 web/analytics/analytics.sqlite-*
