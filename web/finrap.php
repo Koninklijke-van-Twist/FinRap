@@ -1254,7 +1254,11 @@ $finrapReportId = $reportId;
         @media print {
             .finrap-column-help-btn,
             .finrap-info-modal-overlay,
-            .finrap-split-toggle {
+            .finrap-split-toggle,
+            [data-tooltip]::after,
+            [data-tooltip]::before,
+            .value-tooltip-rich,
+            .finrap-floating-tooltip {
                 display: none !important;
             }
         }
@@ -1567,14 +1571,31 @@ $finrapReportId = $reportId;
             }
         }
 
+        /* Landscape + tight page box. Browsers still enforce their own minimum margin. */
+        @page {
+            size: landscape;
+            margin: 4mm;
+        }
+
         @media print {
+
+            /*
+             * Approximate ~90% print scale so extra columns stay in the page box
+             * (tables were overflowing off the right after recent column additions).
+             * True 90% print-dialog scale + headers/footers off cannot be forced from the web page.
+             */
+            html {
+                zoom: 0.9;
+            }
 
             html,
             body {
                 background: #ffffff;
                 width: 100%;
+                max-width: 100%;
                 height: auto;
-                overflow: visible;
+                overflow-x: hidden;
+                overflow-y: visible;
                 margin: 0;
                 padding: 0;
                 color: #000;
@@ -1587,7 +1608,9 @@ $finrapReportId = $reportId;
                 background: transparent;
                 display: block;
                 width: 100%;
+                max-width: 100%;
                 height: auto;
+                overflow-x: hidden;
             }
 
             .project-modal-head,
@@ -1605,44 +1628,51 @@ $finrapReportId = $reportId;
                 max-height: none !important;
                 display: block !important;
                 flex: none !important;
-                overflow: visible !important;
+                overflow-x: hidden !important;
+                overflow-y: visible !important;
                 background: #fff !important;
             }
 
             .project-modal-body {
-                overflow: visible !important;
+                overflow-x: hidden !important;
+                overflow-y: visible !important;
                 height: auto !important;
                 flex: none !important;
                 display: block !important;
                 background: #fff !important;
+                max-width: 100%;
             }
 
             /* Keep header and info panels in their grid layout */
             .project-modal-header-panel {
                 display: grid !important;
                 grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-                gap: 18px 36px !important;
-                padding: 20px !important;
+                gap: 12px 24px !important;
+                padding: 12px 8px !important;
                 background: linear-gradient(135deg, #0066cc 0%, #0052a3 100%) !important;
                 -webkit-print-color-adjust: exact !important;
                 print-color-adjust: exact !important;
                 color: #ffffff !important;
                 width: 100% !important;
+                max-width: 100% !important;
                 height: auto !important;
                 page-break-inside: avoid;
-                margin: 0 0 10px 0 !important;
+                margin: 0 0 8px 0 !important;
+                box-sizing: border-box !important;
             }
 
             .project-modal-info-panel {
                 display: grid !important;
                 grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-                gap: 18px 36px !important;
-                padding: 24px 20px 28px !important;
+                gap: 12px 24px !important;
+                padding: 12px 8px 16px !important;
                 background: #ffffff !important;
                 width: 100% !important;
+                max-width: 100% !important;
                 height: auto !important;
                 page-break-inside: avoid;
-                margin: 0 0 10px 0 !important;
+                margin: 0 0 8px 0 !important;
+                box-sizing: border-box !important;
             }
 
             .project-modal-column {
@@ -1689,21 +1719,26 @@ $finrapReportId = $reportId;
             .project-modal-cost-groups-section {
                 display: block !important;
                 width: 100% !important;
+                max-width: 100% !important;
                 height: auto !important;
-                padding: 0 20px 20px !important;
+                padding: 0 6px 12px !important;
                 background: #ffffff !important;
                 margin: 0 !important;
                 page-break-inside: avoid;
+                overflow-x: hidden;
+                box-sizing: border-box !important;
             }
 
             .analytics-blocks-section {
                 display: grid !important;
                 grid-template-columns: 1fr 1fr 1fr !important;
                 gap: 12px !important;
-                padding: 0 20px 20px !important;
+                padding: 0 6px 12px !important;
                 background: #ffffff !important;
                 margin: 0 !important;
                 page-break-inside: avoid;
+                max-width: 100% !important;
+                box-sizing: border-box !important;
             }
 
             .analytics-block {
@@ -1727,14 +1762,17 @@ $finrapReportId = $reportId;
                 display: flex !important;
             }
 
-            /* Tables */
+            /* Tables: keep the full column set (incl. booked / to-book) inside the page */
             .project-metric-table,
             .project-cost-group-table {
                 width: 100% !important;
+                max-width: 100% !important;
                 display: table !important;
-                overflow: visible !important;
+                table-layout: fixed !important;
+                overflow: hidden !important;
                 white-space: normal !important;
                 border-collapse: collapse;
+                font-size: 10px !important;
                 margin-bottom: 12px;
                 page-break-inside: avoid;
                 background: #ffffff !important;
@@ -1764,9 +1802,12 @@ $finrapReportId = $reportId;
             .project-metric-table th,
             .project-cost-group-table th {
                 display: table-cell;
-                padding: 8px 10px !important;
+                padding: 5px 4px !important;
                 background: var(--kvt-perkins-blue) !important;
                 color: #ffffff !important;
+                white-space: normal !important;
+                overflow-wrap: anywhere;
+                word-break: break-word;
                 -webkit-print-color-adjust: exact !important;
                 print-color-adjust: exact !important;
             }
@@ -1774,9 +1815,15 @@ $finrapReportId = $reportId;
             .project-metric-table td,
             .project-cost-group-table td {
                 display: table-cell;
-                padding: 8px 10px !important;
+                padding: 4px 4px !important;
                 background: #ffffff !important;
                 color: #000 !important;
+                overflow-wrap: anywhere;
+                word-break: break-word;
+            }
+
+            .project-cost-group-table .is-description {
+                white-space: normal !important;
             }
 
             /* Termijn list */
