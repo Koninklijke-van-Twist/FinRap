@@ -562,7 +562,8 @@ class ProjectFinanceService
 
     /**
      * Haalt verwachte omzet/kosten op uit de voorcalculatiebron per project.
-     * Verwachte omzet telt alleen JobBaselineLines met Type = GB-rekening / G/L Account en No = 800000.
+     * Verwachte omzet telt alleen JobBaselineLines met Type = G/L Account (OData-enum;
+     * PHP accepteert ook GB-rekening) en No = 800000.
      * Verwachte kosten blijven de som van alle voorcalculatieregels.
      */
     public function collectProjectForecastForProjects(array $projectNumbers, int $ttl = 3600): array

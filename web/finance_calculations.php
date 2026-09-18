@@ -4,6 +4,7 @@
  * Constants
  */
 const FINANCE_REVENUE_GL_ACCOUNT_TYPE = 'GB-rekening';
+const FINANCE_REVENUE_GL_ACCOUNT_TYPE_ODATA = 'G/L Account';
 const FINANCE_REVENUE_GL_ACCOUNT_NO = '800000';
 
 /**
@@ -306,20 +307,20 @@ function finance_column_installments_received(array $customerLedgerRows): float
 }
 
 /**
- * Geeft de Type-waarden terug die BC OData kan gebruiken voor de G/L-omzetrekening.
- * Dezelfde option-field komt als Nederlandse caption, Engelse caption of enum-naam.
+ * Geeft de Type-waarde(n) die BC OData accepteert voor de G/L-omzetrekening.
+ * Job Planning Line Type-enum: Resource, Item, G/L Account, Text.
+ * NL-caption `GB-rekening` en enum-naam `GLAccount` zijn ongeldig in $filter (HTTP 400).
  */
 function finance_revenue_gl_account_type_odata_values(): array
 {
     return [
-        FINANCE_REVENUE_GL_ACCOUNT_TYPE,
-        'G/L Account',
-        'GLAccount',
+        FINANCE_REVENUE_GL_ACCOUNT_TYPE_ODATA,
     ];
 }
 
 /**
- * Bouwt een OData Type-filter dat Nederlandse en Engelse G/L-rekeningwaarden accepteert.
+ * Bouwt een OData Type-filter met alleen de BC-enumwaarde `G/L Account`.
+ * Geen OR met GB-rekening of GLAccount: die waarden laten de hele query 400'en.
  */
 function finance_revenue_gl_account_type_odata_filter(string $fieldName = 'Type'): string
 {
@@ -328,21 +329,17 @@ function finance_revenue_gl_account_type_odata_filter(string $fieldName = 'Type'
         $field = 'Type';
     }
 
-    $parts = [];
-    foreach (finance_revenue_gl_account_type_odata_values() as $value) {
-        $escaped = str_replace("'", "''", (string) $value);
-        $parts[] = $field . " eq '" . $escaped . "'";
-    }
+    $escaped = str_replace("'", "''", FINANCE_REVENUE_GL_ACCOUNT_TYPE_ODATA);
 
-    return '(' . implode(' or ', $parts) . ')';
+    return $field . " eq '" . $escaped . "'";
 }
 
 /**
- * Geeft het Type-label voor UI-tooltips: Nederlandse én Engelse G/L-caption.
+ * Geeft het Type-label voor UI-formules: de OData-enumwaarde `G/L Account`.
  */
 function finance_revenue_gl_account_type_label(): string
 {
-    return FINANCE_REVENUE_GL_ACCOUNT_TYPE . ' / G/L Account';
+    return FINANCE_REVENUE_GL_ACCOUNT_TYPE_ODATA;
 }
 
 /**
@@ -365,7 +362,8 @@ function finance_is_revenue_gl_account_type(string $type): bool
 /**
  * Bepaalt of een BC-projectplanningsregel (Job Planning Line / JobBaselineLines /
  * FactureerbareProjectPlanningsRegels) meetelt voor aanneemsom/omzet.
- * Alleen G/L-omzetrekening Type = GB-rekening / G/L Account en No = 800000 telt mee;
+ * Alleen G/L-omzetrekening Type = G/L Account (OData) of PHP-alias GB-rekening/GLAccount
+ * en No = 800000 telt mee;
  * resource-/artikelboekingen op dezelfde planning blijven buiten deze som.
  */
 function finance_is_revenue_gl_account_line(array $row): bool
