@@ -113,6 +113,26 @@ PHP;
     file_put_contents($mockScript, str_replace('LOG_PATH', $log, $php));
 }
 
+/**
+ * Zet auth.php terug. Verwijdert het bestand alleen als deze test het zelf heeft aangemaakt.
+ */
+function test_restore_auth_php(string $path, bool $existedBefore, ?string $backup, bool $written): void
+{
+    if (!$written) {
+        return;
+    }
+
+    if ($existedBefore) {
+        if (!is_string($backup)) {
+            return;
+        }
+        file_put_contents($path, $backup);
+        return;
+    }
+
+    @unlink($path);
+}
+
 function test_mock_requests(): array
 {
     global $mockLog;
@@ -133,6 +153,32 @@ function test_mock_requests(): array
  * Page load
  */
 test_assert('mimir uit zonder key', odata_mimir_enabled() === false);
+
+$restoreProbe = sys_get_temp_dir() . '/finrap-auth-restore-probe.php';
+$restoreCreated = sys_get_temp_dir() . '/finrap-auth-restore-created.php';
+file_put_contents($restoreProbe, "<?php\n\$marker = 'original';\n");
+test_restore_auth_php($restoreProbe, true, "<?php\n\$marker = 'original';\n", false);
+test_assert(
+    'restore laat bestaand bestand met rust als de test niet schreef',
+    is_file($restoreProbe) && str_contains((string) file_get_contents($restoreProbe), 'original')
+);
+file_put_contents($restoreProbe, "<?php\n\$marker = 'replaced';\n");
+test_restore_auth_php($restoreProbe, true, "<?php\n\$marker = 'original';\n", true);
+test_assert(
+    'restore zet backup terug nadat de test schreef',
+    is_file($restoreProbe) && str_contains((string) file_get_contents($restoreProbe), 'original')
+);
+@unlink($restoreProbe);
+file_put_contents($restoreCreated, "<?php\n\$marker = 'created';\n");
+test_restore_auth_php($restoreCreated, false, null, true);
+test_assert('restore verwijdert alleen een door de test aangemaakt bestand', !is_file($restoreCreated));
+file_put_contents($restoreCreated, "<?php\n\$marker = 'keep';\n");
+test_restore_auth_php($restoreCreated, true, null, true);
+test_assert(
+    'restore wist geen bestaand bestand zonder leesbare backup',
+    is_file($restoreCreated) && str_contains((string) file_get_contents($restoreCreated), 'keep')
+);
+@unlink($restoreCreated);
 
 $spaceUrl = finrap_company_entity_url_with_query(
     'https://bc.example',
@@ -229,6 +275,14 @@ $baseUrl = '';
 unset($GLOBALS['auth_list'], $GLOBALS['environment'], $GLOBALS['auth']);
 test_reset_discovery_cache();
 
+$authExistedBefore = is_file($authPath);
+$authBackup = null;
+if ($authExistedBefore) {
+    $authRaw = file_get_contents($authPath);
+    $authBackup = is_string($authRaw) ? $authRaw : null;
+}
+$authWritten = false;
+
 try {
     $discovered = auth_discover_companies_across_active_environments(30);
     test_assert(
@@ -255,6 +309,28 @@ try {
         $active === ['Production', 'Sandbox'],
         json_encode($active)
     );
+    unset($GLOBALS['demeter_active_environments']);
+    $coldActive = auth_get_active_environments();
+    test_assert(
+        'koude environment-lijst komt gesorteerd uit discovery',
+        $coldActive === ['Production', 'Sandbox'],
+        json_encode($coldActive)
+    );
+
+    $savedEnvironments = $GLOBALS['demeter_active_environments'] ?? null;
+    $GLOBALS['demeter_active_environments'] = [''];
+    $emptyEnvironmentThrew = false;
+    try {
+        new ProjectFinanceService('Koninklijke van Twist', '');
+    } catch (RuntimeException $error) {
+        $emptyEnvironmentThrew = str_contains($error->getMessage(), 'Geen environment beschikbaar');
+    }
+    if (is_array($savedEnvironments)) {
+        $GLOBALS['demeter_active_environments'] = $savedEnvironments;
+    } else {
+        unset($GLOBALS['demeter_active_environments']);
+    }
+    test_assert('leeg environment blijft een fout in Mímir-modus', $emptyEnvironmentThrew);
 
     unset($GLOBALS['baseUrl']);
     $service = new ProjectFinanceService('Koninklijke van Twist', 'Production');
@@ -320,9 +396,10 @@ try {
         ],
     ];
     $auth = $auth_list['Production'];
-    if (is_file($authPath)) {
-        $authBackup = file_get_contents($authPath);
+    if ($authExistedBefore && !is_string($authBackup)) {
+        throw new RuntimeException('Bestaande auth.php kon niet worden gelezen; test wijzigt het bestand niet.');
     }
+    $authWritten = true;
     file_put_contents($authPath, "<?php\n\$baseUrl = " . var_export($baseUrl, true) . ";\n\$environment = 'Production';\n\$auth_list = " . var_export($auth_list, true) . ";\n\$mimirApi = '';\n");
     test_reset_discovery_cache();
     @unlink($mockLog);
@@ -347,11 +424,7 @@ try {
         proc_terminate($server);
         proc_close($server);
     }
-    if ($authBackup === null) {
-        @unlink($authPath);
-    } else {
-        file_put_contents($authPath, $authBackup);
-    }
+    test_restore_auth_php($authPath, $authExistedBefore, $authBackup, $authWritten);
     @unlink($mockScript);
     @unlink($mockLog);
 }

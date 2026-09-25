@@ -64,7 +64,8 @@ class ProjectFinanceService
             $environmentToUse = auth_get_primary_environment();
         }
 
-        if ($environmentToUse === '' && !$mimirEnabled) {
+        // Leeg environment maakt een protocol-relatieve URL (//ODataV4/...) die Mímir niet kan vertalen.
+        if ($environmentToUse === '') {
             throw new RuntimeException('Geen environment beschikbaar.');
         }
 

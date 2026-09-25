@@ -85,22 +85,8 @@ function auth_get_active_environments(): array
             return array_values(array_map('strval', $cached));
         }
         try {
-            auth_ensure_odata_loaded();
-            if (!function_exists('odata_mimir_companies_as_rows')) {
-                return [];
-            }
-            $rows = odata_mimir_companies_as_rows(null);
-            $envs = [];
-            $seen = [];
-            foreach ($rows as $row) {
-                $env = trim((string) ($row['environment'] ?? ''));
-                if ($env === '' || isset($seen[$env])) {
-                    continue;
-                }
-                $seen[$env] = true;
-                $envs[] = $env;
-            }
-            return $envs;
+            $result = auth_discover_companies_via_mimir();
+            return is_array($result['active_environments'] ?? null) ? $result['active_environments'] : [];
         } catch (Throwable $ignored) {
             return [];
         }
