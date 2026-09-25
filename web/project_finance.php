@@ -46,12 +46,15 @@ class ProjectFinanceService
      */
     public function __construct(string $company, string $environment = '')
     {
-        global $baseUrl, $auth_list;
+        global $baseUrl;
 
         $this->company = trim($company);
-        $this->baseUrl = trim((string) $baseUrl);
+        $this->baseUrl = trim((string) ($baseUrl ?? ''));
 
-        if ($this->baseUrl === '') {
+        // Mímir-modus: OData-URL's worden in odata_get_all vertaald; BC baseUrl/auth zijn dan niet nodig.
+        $mimirEnabled = function_exists('auth_mimir_enabled') && auth_mimir_enabled();
+
+        if ($this->baseUrl === '' && !$mimirEnabled) {
             throw new RuntimeException('baseUrl ontbreekt in auth.php.');
         }
 
@@ -61,6 +64,7 @@ class ProjectFinanceService
             $environmentToUse = auth_get_primary_environment();
         }
 
+        // Leeg environment maakt een protocol-relatieve URL (//ODataV4/...) die Mímir niet kan vertalen.
         if ($environmentToUse === '') {
             throw new RuntimeException('Geen environment beschikbaar.');
         }

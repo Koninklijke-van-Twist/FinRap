@@ -3983,6 +3983,8 @@ function finrap_fetch_estimated_hours_total(
 function finrap_fetch_project(string $company, string $projectNo, int $ttl = 300): ?array
 {
     global $baseUrl;
+    // Lege $baseUrl is geldig in Mímir-modus; odata_get_all vertaalt het pad.
+    $odataBaseUrl = trim((string) ($baseUrl ?? ''));
 
     $projectNoText = trim($projectNo);
     if ($projectNoText === '') {
@@ -3992,7 +3994,7 @@ function finrap_fetch_project(string $company, string $projectNo, int $ttl = 300
     $environment = auth_get_environment_for_company($company, 300);
     $auth = auth_get_auth_for_environment($environment);
 
-    $url = finrap_company_entity_url_with_query($baseUrl, $environment, $company, 'Projecten', [
+    $url = finrap_company_entity_url_with_query($odataBaseUrl, $environment, $company, 'Projecten', [
         '$select' => 'No,Description,Bill_to_Customer_No,Bill_to_Name,Sell_to_Customer_No,Sell_to_Customer_Name,Project_Manager,Person_Responsible,KVT_Sales_Person_Code,Your_Reference,LVS_Your_reference,Creation_Date,Ending_Date,Percent_Completed,Recog_Profit_Amount',
         '$filter' => "No eq '" . str_replace("'", "''", $projectNoText) . "'",
     ]);
@@ -4014,6 +4016,8 @@ function finrap_fetch_project(string $company, string $projectNo, int $ttl = 300
 function finrap_collect_modal_data(string $company, string $projectNo, int $ttl): array
 {
     global $baseUrl;
+    // Lege $baseUrl is geldig in Mímir-modus; odata_get_all vertaalt het pad.
+    $baseUrl = trim((string) ($baseUrl ?? ''));
 
     $environment = auth_get_environment_for_company($company, 300);
     $auth = auth_get_auth_for_environment($environment);
