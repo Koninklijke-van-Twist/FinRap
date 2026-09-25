@@ -49,10 +49,16 @@ class ProjectFinanceService
         global $baseUrl, $auth_list;
 
         $this->company = trim($company);
-        $this->baseUrl = trim((string) $baseUrl);
+        $configuredBase = $baseUrl ?? '';
+        $this->baseUrl = trim(is_string($configuredBase) ? $configuredBase : '');
 
+        $mimirEnabled = function_exists('odata_mimir_enabled') && odata_mimir_enabled();
         if ($this->baseUrl === '') {
-            throw new RuntimeException('baseUrl ontbreekt in auth.php.');
+            if (!$mimirEnabled) {
+                throw new RuntimeException('baseUrl ontbreekt in auth.php.');
+            }
+            // Alleen voor URL-opbouw. odata_get_all herschrijft de fetch naar Mímir.
+            $this->baseUrl = odata_mimir_placeholder_base_url();
         }
 
         // Bepaal environment
