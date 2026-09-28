@@ -35,6 +35,12 @@ $GLOBALS['FINRAP_ODATA_BC_FETCH'] = static function (string $url, array $auth, i
 
 require dirname(__DIR__) . '/web/odata.php';
 
+$mimirTransports = 0;
+$GLOBALS['FINRAP_MIMIR_TRANSPORT'] = static function (string $method, string $url) use (&$mimirTransports): void {
+    $mimirTransports++;
+    throw new Exception('Mímir transport blocked');
+};
+
 function fail(string $message): void
 {
     fwrite(STDERR, "FAIL: $message\n");
@@ -51,6 +57,21 @@ function fallback_log(): string
 function fallback_count(): int
 {
     return substr_count(fallback_log(), '[FinRap] Mímir failed, falling back to direct OData:');
+}
+
+function finrap_fallback_global_base_url(): string
+{
+    global $baseUrl;
+    return isset($baseUrl) && is_string($baseUrl) ? $baseUrl : '';
+}
+
+function finrap_fallback_global_auth_user(): string
+{
+    global $auth;
+    if (!isset($auth) || !is_array($auth)) {
+        return '';
+    }
+    return (string) ($auth['user'] ?? '');
 }
 
 if (odata_mimir_connect_timeout_seconds() !== 10) {
@@ -81,16 +102,14 @@ if ($calls[0]['user'] !== 'bcuser') {
     fail('company-fallback gebruikte niet de BC-credentials');
 }
 
-$mimirBase = 'http://192.0.2.1:9';
-$started = microtime(true);
+$transportsAfterOpen = $mimirTransports;
 $rows = odata_get_all(
     "https://mimir.invalid/Production/ODataV4/Company('Koninklijke%20van%20Twist')/AppWerkorders?\$select=No",
     $auth,
     120
 );
-$elapsed = microtime(true) - $started;
-if ($elapsed >= 2.0) {
-    fail('circuit breaker sloeg Mímir niet over (' . round($elapsed, 3) . 's)');
+if ($mimirTransports !== $transportsAfterOpen) {
+    fail('circuit breaker sloeg Mímir-transport niet over, calls=' . $mimirTransports);
 }
 if (($rows[0]['No'] ?? '') !== 'WO-1') {
     fail('entity-fallback gaf niet de gestubde BC-rijen terug');
@@ -100,8 +119,8 @@ $expectedEntityUrl = "https://bc.example:7148/Production/ODataV4/Company('Konink
 if (!is_array($entityCall) || $entityCall['url'] !== $expectedEntityUrl || $entityCall['user'] !== 'bcuser' || $entityCall['ttl'] !== 120) {
     fail('entity-fallback URL/auth/ttl klopt niet: ' . json_encode($entityCall));
 }
-if (fallback_count() < 2) {
-    fail('elke fallback moet gelogd worden, log=' . fallback_log());
+if (fallback_count() !== 1) {
+    fail('alleen de eerste Mímir-fout wordt gelogd, log=' . fallback_log());
 }
 $log = fallback_log();
 if (strpos($log, 'mimir_test_key_should_not_leak') !== false || strpos($log, 'bc-secret') !== false) {
@@ -142,6 +161,47 @@ $map = odata_mimir_company_environment_map(null);
 if (($map['Hunter van Twist'] ?? '') !== 'Production' || ($map['KVT Gas'] ?? '') !== 'Production') {
     fail('environment-map viel niet terug op BC: ' . json_encode($map));
 }
+
+$spacedUrl = odata_bc_url_from_odata_url("https://mimir.invalid/My%20Env/ODataV4/Company('X')/Projecten?\$select=No");
+if ($spacedUrl !== "https://bc.example:7148/My%20Env/ODataV4/Company('X')/Projecten?\$select=No") {
+    fail('environment in de URL moet behouden en één keer gecodeerd zijn: ' . $spacedUrl);
+}
+
+odata_mimir_circuit_reset();
+$auth_list = [
+    'Production' => $auth,
+    'Sandbox' => ['mode' => 'basic', 'user' => 'sandbox-user', 'pass' => 'sandbox-secret'],
+];
+$GLOBALS['demeter_company_environment_map'] = [
+    'Hunter van Twist' => 'Sandbox',
+    'KVT Gas' => 'Production',
+];
+$beforeSandbox = count($calls);
+$sandboxRows = odata_get_all(
+    "https://mimir.invalid/Sandbox/ODataV4/Company('Hunter%20van%20Twist')/AppWerkorders?\$select=No",
+    $auth,
+    30
+);
+$sandboxCall = $calls[$beforeSandbox] ?? null;
+if (($sandboxRows[0]['No'] ?? '') !== 'WO-1' || !is_array($sandboxCall) || $sandboxCall['user'] !== 'sandbox-user') {
+    fail('fallback gebruikte niet de credentials van het gevraagde environment: ' . json_encode($sandboxCall));
+}
+if (!is_array($sandboxCall) || strpos($sandboxCall['url'], 'https://bc.example:7148/Sandbox/ODataV4/Company(') !== 0) {
+    fail('fallback herschreef niet naar het environment uit de URL: ' . json_encode($sandboxCall));
+}
+
+odata_mimir_circuit_reset();
+$beforeCompanyQuery = count($calls);
+$companyQueryRows = odata_mimir_query('Hunter van Twist', 'AppResource', ['$select' => 'No'], 10);
+$companyQueryCall = $calls[$beforeCompanyQuery] ?? null;
+if (($companyQueryRows[0]['No'] ?? '') !== 'WO-1' || !is_array($companyQueryCall) || $companyQueryCall['user'] !== 'sandbox-user') {
+    fail('query-fallback gebruikte niet het environment van het bedrijf: ' . json_encode($companyQueryCall));
+}
+if (!is_array($companyQueryCall) || strpos($companyQueryCall['url'], "https://bc.example:7148/Sandbox/ODataV4/Company('Hunter%20van%20Twist')/AppResource?") !== 0) {
+    fail('query-fallback bouwde niet de Sandbox-URL: ' . json_encode($companyQueryCall));
+}
+unset($GLOBALS['demeter_company_environment_map']);
+$auth_list = ['Production' => $auth];
 
 $loggedBeforeRethrow = fallback_count();
 $callsBeforeRethrow = count($calls);
@@ -191,5 +251,32 @@ $directCall = $calls[count($calls) - 1] ?? null;
 if (($directRows[0]['No'] ?? '') !== 'WO-1' || !is_array($directCall) || $directCall['url'] !== $directOnlyUrl) {
     fail('lege $mimirApi moet de oude directe route ongewijzigd gebruiken: ' . json_encode($directCall));
 }
+if (strpos(fallback_log(), 'sandbox-secret') !== false || strpos(fallback_log(), 'file-secret') !== false) {
+    fail('log bevat een geheim');
+}
+
+$authFile = sys_get_temp_dir() . '/finrap-auth-globals.php';
+file_put_contents(
+    $authFile,
+    "<?php\n\$baseUrl = 'https://bc-from-file.example:7148/';\n\$environment = 'Sandbox';\n\$auth = ['mode' => 'basic', 'user' => 'file-user', 'pass' => 'file-secret'];\n\$auth_list = ['Sandbox' => \$auth];\n"
+);
+unset($GLOBALS['baseUrl'], $GLOBALS['environment'], $GLOBALS['auth'], $GLOBALS['auth_list'], $GLOBALS['FINRAP_AUTH_PHP_INCLUDED']);
+unset($baseUrl, $environment, $auth, $auth_list);
+$GLOBALS['FINRAP_AUTH_PHP_PATH'] = $authFile;
+odata_bc_ensure_config_loaded();
+if (finrap_fallback_global_base_url() !== 'https://bc-from-file.example:7148/') {
+    fail('lazy auth.php zette baseUrl niet als echte global');
+}
+if (($GLOBALS['baseUrl'] ?? '') !== 'https://bc-from-file.example:7148/') {
+    fail('lazy auth.php kopieerde baseUrl niet naar $GLOBALS');
+}
+if (finrap_fallback_global_auth_user() !== 'file-user') {
+    fail('lazy auth.php zette auth niet als echte global');
+}
+if (($GLOBALS['auth_list']['Sandbox']['user'] ?? '') !== 'file-user') {
+    fail('lazy auth.php kopieerde auth_list niet naar $GLOBALS');
+}
+@unlink($authFile);
+unset($GLOBALS['FINRAP_AUTH_PHP_PATH']);
 
 echo "OK\n";
