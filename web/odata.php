@@ -26,12 +26,21 @@ function odata_get_all(string $url, array $auth, $ttlSeconds = 300): array
     consolelog("Fetching $url\n");
     $ttlSeconds = max(0, (int) $ttlSeconds);
 
-    if (odata_mimir_api_key() !== '') {
+    // Goedgekeurde uitzondering: alleen deze afslag. Fallbacklogica staat in mimir_odata.php.
+    if (odata_mimir_api_key() !== '' && !odata_mimir_circuit_open()) {
         // Mímir beheert de BC-cache (max_age); FinRap-filecache wordt overgeslagen.
         return odata_mimir_fetch_all($url, $ttlSeconds === 0 ? 3600 : $ttlSeconds);
     }
 
+    $direct = odata_mimir_prepare_direct_fetch($url, $auth);
+    $url = $direct['url'];
+    $auth = $direct['auth'];
+
     $ttlSeconds = max(1, $ttlSeconds);
+    if (isset($GLOBALS['FINRAP_ODATA_BC_FETCH']) && is_callable($GLOBALS['FINRAP_ODATA_BC_FETCH'])) {
+        return $GLOBALS['FINRAP_ODATA_BC_FETCH']($url, $auth, $ttlSeconds);
+    }
+
     maybe_cleanup_expired_cache_files();
 
     $cacheKey = build_cache_key($url, $auth);
@@ -123,7 +132,7 @@ function odata_get_json(string $url, array $auth): array
 
 function build_cache_key(string $url, array $auth): string
 {
-    require __DIR__ . "/auth.php";
+    odata_bc_ensure_config_loaded();
     require_once __DIR__ . "/auth_helper.php";
     $user = (string) ($auth['user'] ?? '');
     $envFragment = auth_get_environment_key_fragment();

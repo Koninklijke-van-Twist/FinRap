@@ -12,7 +12,7 @@ alwaysApply: true
 
 ## Niet wijzigen
 - Bestand `web/logincheck.php` niet aanpassen.
-- Bestand `web/odata.php` niet aanpassen.
+- Bestand `web/odata.php` niet aanpassen, met één goedgekeurde uitzondering: de Mímir-fallback mag in `odata_get_all` alleen een korte afslag houden (circuit dicht → Mímir, anders de bestaande directe BC-body). De fallbacklogica zelf staat in `web/mimir_odata.php`.
 - Bestand `web/auth.php` alleen aanpassen na expliciete gebruikersvraag.
 
 ## Data en logica werkorders
@@ -59,7 +59,7 @@ alwaysApply: true
   - geen class-definities tussen page-load code in gecombineerde scriptbestanden
 - Respecteer altijd bestaande uitzonderingen uit deze instructies:
   - `web/logincheck.php` niet aanpassen
-  - `web/odata.php` niet aanpassen
+  - `web/odata.php` niet aanpassen, behalve de goedgekeurde Mímir-fallbackafslag in `odata_get_all` (logica in `web/mimir_odata.php`)
   - `web/auth.php` alleen aanpassen na expliciete gebruikersvraag
 
 ## Leidende authoriteit kosten/opbrengsten
