@@ -1915,11 +1915,11 @@ function finrap_map_termijn_line_from_planning_row(array $contractRow): array
 
 function finrap_billable_planning_select(): string
 {
-    return 'Job_No,Line_No,Line_Type,Job_Task_No,Type,No,Description,Description_2,Document_No,'
+    return 'Line_No,Line_Type,Job_Task_No,Type,No,Description,Description_2,Document_No,'
         . FINRAP_BILLABLE_PLANNING_AMOUNT_FIELD
         . ',Qty_Invoiced,Planning_Date,'
         . FINRAP_BILLABLE_PLANNING_INVOICED_FIELD
-        . ',LVS_Document_Status,'
+        . ','
         . FINRAP_PROJECT_TASK_CHANGE_ORDER_FIELD;
 }
 
@@ -3140,10 +3140,10 @@ function finrap_fetch_purchase_lines_for_project(
     string $projectFilter
 ): array {
     $selectVariants = [
-        'Job_No,Job_Task_No,No,LVS_Completely_Received,Completely_Received,Qty_Posted,Quantity_Received,Qty_Received,Direct_Unit_Cost,Unit_Cost_LCY,Amt_Rcd_Not_Invoiced,Line_Amount',
-        'Job_No,Job_Task_No,No,Completely_Received,Qty_Posted,Quantity_Received,Direct_Unit_Cost,Amt_Rcd_Not_Invoiced,Line_Amount',
-        'Job_No,Job_Task_No,No,LVS_Completely_Received,Quantity_Received,Direct_Unit_Cost,Line_Amount',
-        'Job_No,Job_Task_No,Completely_Received,Quantity_Received,Direct_Unit_Cost,Line_Amount',
+        'Job_Task_No,No,LVS_Completely_Received,Completely_Received,Qty_Posted,Quantity_Received,Qty_Received,Direct_Unit_Cost,Unit_Cost_LCY,Amt_Rcd_Not_Invoiced,Line_Amount',
+        'Job_Task_No,No,Completely_Received,Qty_Posted,Quantity_Received,Direct_Unit_Cost,Amt_Rcd_Not_Invoiced,Line_Amount',
+        'Job_Task_No,No,LVS_Completely_Received,Quantity_Received,Direct_Unit_Cost,Line_Amount',
+        'Job_Task_No,Completely_Received,Quantity_Received,Direct_Unit_Cost,Line_Amount',
     ];
 
     foreach (FINRAP_PURCHASE_LINE_ENTITY_SETS as $entitySet) {
@@ -3996,7 +3996,7 @@ function finrap_fetch_project(string $company, string $projectNo, int $ttl = 300
     $auth = auth_get_auth_for_environment($environment);
 
     $url = finrap_company_entity_url_with_query($odataBaseUrl, $environment, $company, 'Projecten', [
-        '$select' => 'No,Description,Bill_to_Customer_No,Bill_to_Name,Sell_to_Customer_No,Sell_to_Customer_Name,Project_Manager,Person_Responsible,KVT_Sales_Person_Code,Your_Reference,LVS_Your_reference,Creation_Date,Ending_Date,Percent_Completed,Recog_Profit_Amount',
+        '$select' => 'No,Description,Bill_to_Customer_No,Bill_to_Name,Sell_to_Customer_No,Sell_to_Customer_Name,Project_Manager,Person_Responsible,KVT_Sales_Person_Code,Your_Reference,LVS_Your_reference,Creation_Date,Ending_Date',
         '$filter' => "No eq '" . str_replace("'", "''", $projectNoText) . "'",
     ]);
 
@@ -4105,7 +4105,7 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
 
     try {
         $customerUrl = finrap_company_entity_url_with_query($baseUrl, $environment, $company, 'Customer_Ledger_Entries', [
-            '$select' => 'Entry_No,Amount_LCY,Remaining_Amt_LCY,Sales_LCY,Posting_Date,Due_Date,Closed_at_Date,Description,Global_Dimension_2_Code',
+            '$select' => 'Entry_No,Amount_LCY,Remaining_Amt_LCY,Sales_LCY,Posting_Date,Due_Date,Closed_at_Date,Description',
             '$filter' => "Global_Dimension_2_Code eq '" . $escapedProject . "'",
         ]);
         $customerRows = odata_get_all($customerUrl, $auth, $ttl);
@@ -4120,7 +4120,7 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
 
     try {
         $taskUrl = finrap_company_entity_url_with_query($baseUrl, $environment, $company, 'ProjectenJobTaskLines', [
-            '$select' => 'Job_No,Job_Task_No,Description,Job_Task_Type,Totaling',
+            '$select' => 'Job_Task_No,Description,Job_Task_Type,Totaling',
             '$filter' => $projectFilter,
         ]);
         $taskRows = odata_get_all($taskUrl, $auth, $ttl);
@@ -4207,8 +4207,8 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
         $ttl,
         'JobLedgerEntries',
         [
-            'Job_No,Job_Task_No,Total_Cost_LCY,Type',
-            'Job_No,Job_Task_No,Total_Cost_LCY',
+            'Job_Task_No,Total_Cost_LCY,Type',
+            'Job_Task_No,Total_Cost_LCY',
         ],
         $projectFilter
     );
@@ -4245,9 +4245,9 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
         $ttl,
         FINRAP_PLANNING_LINES_ENTITY_SET,
         [
-            'Job_No,Job_Task_No,No,Qty_to_Transfer_to_Journal,Unit_Cost_LCY,Qty_Posted,LVS_Completely_Received,Completely_Received,Quantity_Received',
-            'Job_No,Job_Task_No,No,Qty_to_Transfer_to_Journal,Unit_Cost_LCY,Qty_Posted,Completely_Received,Quantity_Received',
-            'Job_No,Job_Task_No,No,Qty_to_Transfer_to_Journal,Unit_Cost_LCY',
+            'Job_Task_No,No,Qty_to_Transfer_to_Journal,Unit_Cost_LCY,Qty_Posted,LVS_Completely_Received,Completely_Received,Quantity_Received',
+            'Job_Task_No,No,Qty_to_Transfer_to_Journal,Unit_Cost_LCY,Qty_Posted,Completely_Received,Quantity_Received',
+            'Job_Task_No,No,Qty_to_Transfer_to_Journal,Unit_Cost_LCY',
         ],
         $projectFilter
     );
@@ -4399,7 +4399,7 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
 
     try {
         $hoursUrl = finrap_company_entity_url_with_query($baseUrl, $environment, $company, 'Job_Task_Lines', [
-            '$select' => 'Job_No,Job_Task_No,Job_Task_Type,LVS_Budget_Hours_Quantity,LVS_Used_Hours_Quantity,LVS_Forecast_Hours_Quantity',
+            '$select' => 'Job_Task_No,Job_Task_Type,LVS_Budget_Hours_Quantity,LVS_Used_Hours_Quantity',
             '$filter' => $projectFilter,
         ]);
         $hoursRows = odata_get_all($hoursUrl, $auth, $ttl);
