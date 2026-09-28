@@ -51,7 +51,8 @@ class ProjectFinanceService
         $this->company = trim($company);
         $this->baseUrl = trim((string) ($baseUrl ?? ''));
 
-        // Mímir-modus: OData-URL's worden in odata_get_all vertaald; BC baseUrl/auth zijn dan niet nodig.
+        // Mímir-modus vertaalt OData-URL's in odata_get_all. baseUrl/auth blijven geladen:
+        // bij een Mímir-fout valt dezelfde fetch terug op de directe BC-route.
         $mimirEnabled = function_exists('auth_mimir_enabled') && auth_mimir_enabled();
 
         if ($this->baseUrl === '' && !$mimirEnabled) {

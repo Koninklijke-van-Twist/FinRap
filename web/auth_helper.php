@@ -274,7 +274,8 @@ function auth_fetch_companies_for_environment_via_curl(string $url, array $auth)
 }
 
 /**
- * Company-discovery via Mímir companies.php (geen BC auth_list/baseUrl).
+ * Company-discovery via Mímir companies.php.
+ * Faalt Mímir, dan levert odata_mimir_companies_as_rows de directe BC-companylijst.
  */
 function auth_discover_companies_via_mimir(): array
 {
@@ -283,7 +284,7 @@ function auth_discover_companies_via_mimir(): array
         throw new RuntimeException('Mímir company-discovery vereist odata.php.');
     }
 
-    $rows = odata_mimir_companies_as_rows(null);
+    $rows = odata_mimir_companies_as_rows_impl(null);
     $companiesByEnvironment = [];
     $companyToEnvironment = [];
     $duplicates = [];
@@ -390,9 +391,35 @@ function auth_discover_companies_via_mimir(): array
  */
 function auth_discover_companies_across_active_environments(int $ttlSeconds = 300): array
 {
-    // Mímir: companies + environments uit Mímir API — geen $auth_list/$baseUrl nodig.
+    // Mímir eerst. Na een Mímir-fout in dit proces, en als BC-credentials er zijn,
+    // de pre-Mímir discovery (auth_list + Companies/Company-URL's + filecache).
     if (auth_mimir_enabled()) {
-        return auth_discover_companies_via_mimir();
+        $circuitOpen = function_exists('odata_mimir_circuit_open') && odata_mimir_circuit_open();
+        $bcReady = function_exists('odata_bc_credentials_configured') && odata_bc_credentials_configured();
+        if ($circuitOpen && !$bcReady) {
+            $previous = function_exists('odata_mimir_last_error') ? odata_mimir_last_error() : null;
+            if ($previous instanceof Throwable) {
+                throw $previous;
+            }
+            throw new RuntimeException('Mímir eerder mislukt.');
+        }
+        if (!$circuitOpen) {
+            try {
+                return auth_discover_companies_via_mimir();
+            } catch (Throwable $exception) {
+                if (!function_exists('odata_mimir_circuit_open') || !odata_mimir_circuit_open()) {
+                    if (function_exists('odata_mimir_trip')) {
+                        odata_mimir_trip($exception);
+                    }
+                }
+                if (!$bcReady && !(function_exists('odata_bc_credentials_configured') && odata_bc_credentials_configured())) {
+                    throw $exception;
+                }
+                if (function_exists('odata_mimir_log_fallback')) {
+                    odata_mimir_log_fallback($exception);
+                }
+            }
+        }
     }
 
     $activeEnvironments = auth_get_active_environments();

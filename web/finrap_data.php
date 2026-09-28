@@ -3983,7 +3983,8 @@ function finrap_fetch_estimated_hours_total(
 function finrap_fetch_project(string $company, string $projectNo, int $ttl = 300): ?array
 {
     global $baseUrl;
-    // Lege $baseUrl is geldig in Mímir-modus; odata_get_all vertaalt het pad.
+    // Lege $baseUrl is geldig zolang Mímir antwoordt. Bij uitval herschrijft de fallback
+    // naar $baseUrl uit auth.php; die BC-credentials moeten dus blijven staan.
     $odataBaseUrl = trim((string) ($baseUrl ?? ''));
 
     $projectNoText = trim($projectNo);
@@ -4016,7 +4017,8 @@ function finrap_fetch_project(string $company, string $projectNo, int $ttl = 300
 function finrap_collect_modal_data(string $company, string $projectNo, int $ttl): array
 {
     global $baseUrl;
-    // Lege $baseUrl is geldig in Mímir-modus; odata_get_all vertaalt het pad.
+    // Lege $baseUrl is geldig zolang Mímir antwoordt. Bij uitval herschrijft de fallback
+    // naar $baseUrl uit auth.php; die BC-credentials moeten dus blijven staan.
     $baseUrl = trim((string) ($baseUrl ?? ''));
 
     $environment = auth_get_environment_for_company($company, 300);

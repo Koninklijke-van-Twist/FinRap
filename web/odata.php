@@ -27,11 +27,28 @@ function odata_get_all(string $url, array $auth, $ttlSeconds = 300): array
     $ttlSeconds = max(0, (int) $ttlSeconds);
 
     if (odata_mimir_api_key() !== '') {
-        // Mímir beheert de BC-cache (max_age); FinRap-filecache wordt overgeslagen.
-        return odata_mimir_fetch_all($url, $ttlSeconds === 0 ? 3600 : $ttlSeconds);
+        return odata_mimir_or_direct(
+            static function () use ($url, $ttlSeconds): array {
+                // Mímir beheert de BC-cache (max_age); FinRap-filecache wordt overgeslagen.
+                return odata_mimir_fetch_all_impl($url, $ttlSeconds === 0 ? 3600 : $ttlSeconds);
+            },
+            static function () use ($url, $auth, $ttlSeconds): array {
+                $directAuth = odata_bc_auth_for_fallback($auth) ?? $auth;
+                return odata_get_all_direct(odata_bc_url_from_odata_url($url), $directAuth, $ttlSeconds);
+            }
+        );
     }
 
-    $ttlSeconds = max(1, $ttlSeconds);
+    return odata_get_all_direct($url, $auth, $ttlSeconds);
+}
+
+function odata_get_all_direct(string $url, array $auth, $ttlSeconds = 300): array
+{
+    $ttlSeconds = max(1, (int) $ttlSeconds);
+    if (isset($GLOBALS['FINRAP_ODATA_BC_FETCH']) && is_callable($GLOBALS['FINRAP_ODATA_BC_FETCH'])) {
+        return $GLOBALS['FINRAP_ODATA_BC_FETCH']($url, $auth, $ttlSeconds);
+    }
+
     maybe_cleanup_expired_cache_files();
 
     $cacheKey = build_cache_key($url, $auth);
