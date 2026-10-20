@@ -307,6 +307,39 @@ function finance_column_installments_received(array $customerLedgerRows): float
 }
 
 /**
+ * Bepaalt of een factureerbare planningsregel volledig gefactureerd is.
+ *
+ * Uitkomst voor termijnstatus en kolom Gefactureerde termijnen:
+ * Qty_Invoiced moet gelijk zijn aan Quantity en groter dan 0.
+ * Invoiced_Amount_LCY telt niet mee (in Business Central altijd 0).
+ */
+function finance_planning_line_is_fully_invoiced(float $qtyInvoiced, float $quantity): bool
+{
+    return $qtyInvoiced > 0.0 && abs($qtyInvoiced - $quantity) < 0.000001;
+}
+
+/**
+ * Berekent kolomwaarde Gefactureerde termijnen voor één factureerbare planningsregel, excl. BTW.
+ *
+ * Volledig gefactureerd (Qty_Invoiced = Quantity en groter dan 0): Line_Amount_LCY.
+ * Anders 0. Invoiced_Amount_LCY wordt niet gebruikt.
+ */
+function finance_column_installments_invoiced_planning_line(array $planningRow): float
+{
+    $qtyInvoiced = finance_to_float($planningRow['Qty_Invoiced'] ?? $planningRow['qty_invoiced'] ?? 0.0);
+    $quantity = finance_to_float($planningRow['Quantity'] ?? $planningRow['quantity'] ?? 0.0);
+    if (!finance_planning_line_is_fully_invoiced($qtyInvoiced, $quantity)) {
+        return 0.0;
+    }
+
+    if (array_key_exists('Line_Amount_LCY', $planningRow)) {
+        return finance_to_float($planningRow['Line_Amount_LCY']);
+    }
+
+    return finance_to_float($planningRow['amount'] ?? 0.0);
+}
+
+/**
  * Geeft de Type-waarde(n) die BC OData accepteert voor de G/L-omzetrekening.
  * Job Planning Line Type-enum: Resource, Item, G/L Account, Text.
  * NL-caption `GB-rekening` en enum-naam `GLAccount` zijn ongeldig in $filter (HTTP 400).

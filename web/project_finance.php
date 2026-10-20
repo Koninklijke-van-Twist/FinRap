@@ -35,6 +35,11 @@ class ProjectFinanceService
         self::REVENUE_ROW_MODE_SUM_INVERT,
     ];
 
+    /**
+     * OData-$select voor SalesInvoiceLines bij termijnkoppeling.
+     */
+    public const SALES_INVOICE_LINE_SELECT = 'Document_No,Job_No,Description,Amount';
+
     private string $company;
     private string $baseUrl;
     private string $environment;
@@ -889,6 +894,43 @@ class ProjectFinanceService
             'resultaat' => finance_calculate_result($projectRevenue, $projectCosts),
             'workorders' => $workorders,
         ];
+    }
+
+    /**
+     * Haalt verkoopfactuurregels van één project op, zonder deduplicatie.
+     * Elke SalesInvoiceLines-regel blijft apart, zodat één factuurregel niet twee termijnen bedient
+     * en een verzamelfactuur (meerdere regels, één Document_No) intact blijft.
+     * Bij een OData-fout een lege lijst; de aanroepende termijnflow vangt dat af.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function getProjectSalesInvoiceLines(string $projectNo, int $ttl = 3600): array
+    {
+        $projectNoText = trim($projectNo);
+        if ($projectNoText === '') {
+            return [];
+        }
+
+        try {
+            $invoiceUrl = $this->companyEntityUrlWithQuery('SalesInvoiceLines', [
+                '$select' => self::SALES_INVOICE_LINE_SELECT,
+                '$filter' => "Job_No eq '" . self::escapeOdataString($projectNoText) . "'",
+            ]);
+            $invoiceRows = odata_get_all($invoiceUrl, $this->auth, $ttl);
+        } catch (Throwable $ignoredSalesInvoiceLoadError) {
+            return [];
+        }
+
+        $lines = [];
+        foreach ($invoiceRows as $invoiceRow) {
+            if (!is_array($invoiceRow)) {
+                continue;
+            }
+
+            $lines[] = $invoiceRow;
+        }
+
+        return $lines;
     }
 
     /**

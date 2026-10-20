@@ -860,8 +860,8 @@ $tooltipOrderResult = finrap_tooltip_formula_html([
     ['type' => 'text', 'text' => '(Contract Value - VC Costs) + Variance'],
 ]);
 $tooltipInstallmentsInvoiced = finrap_tooltip_formula_html([
-    ['type' => 'ref', 'table' => FINRAP_BILLABLE_PLANNING_LINES_ENTITY_SET, 'field' => FINRAP_BILLABLE_PLANNING_INVOICED_FIELD],
-    ['type' => 'text', 'text' => ' (Type = ' . finance_revenue_gl_account_type_label() . ', No = ' . FINRAP_BUDGET_REVENUE_NO . ')' . finrap_tooltip_vat_suffix('excl')],
+    ['type' => 'ref', 'table' => FINRAP_BILLABLE_PLANNING_LINES_ENTITY_SET, 'field' => FINRAP_BILLABLE_PLANNING_AMOUNT_FIELD],
+    ['type' => 'text', 'text' => ' (Qty_Invoiced = Quantity > 0, Type = ' . finance_revenue_gl_account_type_label() . ', No = ' . FINRAP_BUDGET_REVENUE_NO . ')' . finrap_tooltip_vat_suffix('excl')],
 ]);
 $tooltipInstallmentsReceived = finrap_tooltip_formula_html([
     ['type' => 'ref', 'table' => 'Customer_Ledger_Entries', 'field' => 'Sales_LCY'],
@@ -890,6 +890,9 @@ $tooltipTermijnStatus = finrap_tooltip_formula_html([
 ]);
 $tooltipTermijnLedgerDescription = finrap_tooltip_formula_html([
     ['type' => 'ref', 'table' => 'Customer_Ledger_Entries', 'field' => 'Description'],
+    ['type' => 'text', 'text' => LOC('report.tooltip.fallback')],
+    ['type' => 'ref', 'table' => 'SalesInvoiceLines', 'field' => 'Document_No'],
+    ['type' => 'text', 'text' => LOC('report.tooltip.fallback_close')],
 ]);
 $tooltipTermijnPostingDate = finrap_tooltip_formula_html([
     ['type' => 'ref', 'table' => 'Customer_Ledger_Entries', 'field' => 'Posting_Date'],

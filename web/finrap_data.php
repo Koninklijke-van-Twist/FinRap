@@ -1821,82 +1821,302 @@ function finrap_amounts_match_for_termijn(float $left, float $right, float $epsi
     return abs($left - $right) < $epsilon || abs(abs($left) - abs($right)) < $epsilon;
 }
 
-function finrap_find_customer_ledger_match_for_termijn(
-    float $termijnAmount,
-    array $customerRows,
-    array &$usedEntryNos
-): ?array {
-    foreach ($customerRows as $customerRow) {
-        if (!is_array($customerRow)) {
+function finrap_termijn_invoice_number_label(string $ledgerDescription, string $documentNo): string
+{
+    $description = trim($ledgerDescription);
+    if ($description !== '') {
+        return $description;
+    }
+
+    return trim($documentNo);
+}
+
+function finrap_sales_invoice_line_select(): string
+{
+    return ProjectFinanceService::SALES_INVOICE_LINE_SELECT;
+}
+
+function finrap_customer_ledger_termijn_select(): string
+{
+    return 'Entry_No,Document_No,Amount_LCY,Remaining_Amt_LCY,Sales_LCY,Posting_Date,Due_Date,Closed_at_Date,Description';
+}
+
+function finrap_sales_invoice_line_matches_project(array $invoiceRow, string $projectNo): bool
+{
+    $expectedProjectNo = trim($projectNo);
+    if ($expectedProjectNo === '') {
+        return true;
+    }
+
+    return trim((string) ($invoiceRow['Job_No'] ?? '')) === $expectedProjectNo;
+}
+
+function finrap_find_sales_invoice_line_index_by_description(
+    string $description,
+    float $amount,
+    array $invoiceLines,
+    array $usedInvoiceIndexes,
+    string $projectNo
+): ?int {
+    $description = trim($description);
+    if ($description === '' || abs($amount) < 0.000001) {
+        return null;
+    }
+
+    foreach ($invoiceLines as $index => $invoiceRow) {
+        if (!is_int($index) || isset($usedInvoiceIndexes[$index]) || !is_array($invoiceRow)) {
             continue;
         }
 
-        $entryNo = (int) ($customerRow['Entry_No'] ?? 0);
-        if ($entryNo > 0 && isset($usedEntryNos[$entryNo])) {
+        if (!finrap_sales_invoice_line_matches_project($invoiceRow, $projectNo)) {
             continue;
         }
 
-        $salesLcy = finance_to_float($customerRow['Sales_LCY'] ?? 0.0);
-        if (!finrap_amounts_match_for_termijn($salesLcy, $termijnAmount)) {
+        if (trim((string) ($invoiceRow['Document_No'] ?? '')) === '') {
             continue;
         }
 
-        if ($entryNo > 0) {
-            $usedEntryNos[$entryNo] = true;
+        if (trim((string) ($invoiceRow['Description'] ?? '')) !== $description) {
+            continue;
         }
 
-        return $customerRow;
+        if (!finrap_amounts_match_for_termijn(finance_to_float($invoiceRow['Amount'] ?? 0.0), $amount)) {
+            continue;
+        }
+
+        return $index;
     }
 
     return null;
 }
 
-function finrap_enrich_termijn_lines_with_customer_ledger(array $termijnLines, array $customerRows): array
-{
-    $usedEntryNos = [];
+function finrap_find_unique_sales_invoice_line_index_by_amount(
+    float $amount,
+    array $invoiceLines,
+    array $usedInvoiceIndexes,
+    string $projectNo
+): ?int {
+    if (abs($amount) < 0.000001) {
+        return null;
+    }
 
-    foreach ($termijnLines as &$termijnLine) {
+    $matchIndex = null;
+    foreach ($invoiceLines as $index => $invoiceRow) {
+        if (!is_int($index) || !is_array($invoiceRow)) {
+            continue;
+        }
+
+        if (!finrap_sales_invoice_line_matches_project($invoiceRow, $projectNo)) {
+            continue;
+        }
+
+        if (trim((string) ($invoiceRow['Document_No'] ?? '')) === '') {
+            continue;
+        }
+
+        if (!finrap_amounts_match_for_termijn(finance_to_float($invoiceRow['Amount'] ?? 0.0), $amount)) {
+            continue;
+        }
+
+        if ($matchIndex !== null) {
+            return null;
+        }
+
+        $matchIndex = $index;
+    }
+
+    if ($matchIndex === null || isset($usedInvoiceIndexes[$matchIndex])) {
+        return null;
+    }
+
+    return $matchIndex;
+}
+
+function finrap_customer_ledger_entries_for_document(array $customerRows, string $documentNo): array
+{
+    $documentNo = trim($documentNo);
+    if ($documentNo === '') {
+        return [];
+    }
+
+    $entries = [];
+    foreach ($customerRows as $customerRow) {
+        if (!is_array($customerRow)) {
+            continue;
+        }
+
+        if (trim((string) ($customerRow['Document_No'] ?? '')) !== $documentNo) {
+            continue;
+        }
+
+        $entries[] = $customerRow;
+    }
+
+    return $entries;
+}
+
+function finrap_blank_termijn_invoice_fields(array $termijnLine, string $status): array
+{
+    $termijnLine['status'] = $status;
+    $termijnLine['ledger_description'] = '';
+    $termijnLine['invoice_document_no'] = '';
+    $termijnLine['posting_date'] = '';
+    $termijnLine['due_date'] = '';
+    $termijnLine['closed_at_date'] = '';
+
+    return $termijnLine;
+}
+
+function finrap_apply_customer_ledger_document_to_termijn(array $termijnLine, string $documentNo, array $customerRows): array
+{
+    $documentNo = trim($documentNo);
+    $termijnLine['status'] = 'invoiced';
+    $termijnLine['invoice_document_no'] = $documentNo;
+    $termijnLine['posting_date'] = '';
+    $termijnLine['due_date'] = '';
+    $termijnLine['closed_at_date'] = '';
+
+    $entries = finrap_customer_ledger_entries_for_document($customerRows, $documentNo);
+    $descriptionSource = '';
+    $dateSource = null;
+    $allClosed = $entries !== [];
+
+    foreach ($entries as $entry) {
+        $description = trim((string) ($entry['Description'] ?? ''));
+        if ($descriptionSource === '' && $description !== '') {
+            $descriptionSource = $description;
+            $dateSource = $entry;
+        }
+
+        $closedAtDate = trim((string) ($entry['Closed_at_Date'] ?? ''));
+        if (finrap_is_bc_blank_date($closedAtDate)) {
+            $allClosed = false;
+        }
+    }
+
+    if ($dateSource === null && $entries !== []) {
+        $dateSource = $entries[0];
+    }
+
+    $termijnLine['ledger_description'] = finrap_termijn_invoice_number_label($descriptionSource, $documentNo);
+
+    if (!is_array($dateSource)) {
+        return $termijnLine;
+    }
+
+    $postingDate = trim((string) ($dateSource['Posting_Date'] ?? ''));
+    if (!finrap_is_bc_blank_date($postingDate)) {
+        $termijnLine['posting_date'] = $postingDate;
+    }
+
+    $dueDate = trim((string) ($dateSource['Due_Date'] ?? ''));
+    if (!finrap_is_bc_blank_date($dueDate)) {
+        $termijnLine['due_date'] = $dueDate;
+    }
+
+    if (!$allClosed) {
+        return $termijnLine;
+    }
+
+    $closedAtDate = trim((string) ($dateSource['Closed_at_Date'] ?? ''));
+    if (!finrap_is_bc_blank_date($closedAtDate)) {
+        $termijnLine['closed_at_date'] = $closedAtDate;
+    }
+    $termijnLine['status'] = 'paid';
+
+    return $termijnLine;
+}
+
+function finrap_enrich_termijn_lines_with_invoices(
+    array $termijnLines,
+    array $salesInvoiceLines,
+    array $customerRows,
+    string $projectNo = ''
+): array {
+    $invoiceLines = [];
+    foreach ($salesInvoiceLines as $invoiceRow) {
+        if (!is_array($invoiceRow)) {
+            continue;
+        }
+
+        $invoiceLines[] = $invoiceRow;
+    }
+
+    $assignments = [];
+    $usedInvoiceIndexes = [];
+
+    foreach ($termijnLines as $termijnIndex => $termijnLine) {
+        if (!is_array($termijnLine) || !finrap_termijn_line_is_fully_invoiced($termijnLine)) {
+            continue;
+        }
+
+        $matchIndex = finrap_find_sales_invoice_line_index_by_description(
+            (string) ($termijnLine['description'] ?? ''),
+            finance_to_float($termijnLine['amount'] ?? 0.0),
+            $invoiceLines,
+            $usedInvoiceIndexes,
+            $projectNo
+        );
+        if ($matchIndex === null) {
+            continue;
+        }
+
+        $assignments[$termijnIndex] = $matchIndex;
+        $usedInvoiceIndexes[$matchIndex] = true;
+    }
+
+    foreach ($termijnLines as $termijnIndex => $termijnLine) {
+        if (!is_array($termijnLine) || isset($assignments[$termijnIndex]) || !finrap_termijn_line_is_fully_invoiced($termijnLine)) {
+            continue;
+        }
+
+        $matchIndex = finrap_find_unique_sales_invoice_line_index_by_amount(
+            finance_to_float($termijnLine['amount'] ?? 0.0),
+            $invoiceLines,
+            $usedInvoiceIndexes,
+            $projectNo
+        );
+        if ($matchIndex === null) {
+            continue;
+        }
+
+        $assignments[$termijnIndex] = $matchIndex;
+        $usedInvoiceIndexes[$matchIndex] = true;
+    }
+
+    foreach ($termijnLines as $termijnIndex => &$termijnLine) {
         if (!is_array($termijnLine)) {
             continue;
         }
 
-        $termijnLine['status'] = 'not_invoiced';
-        $termijnLine['ledger_description'] = '';
-        $termijnLine['posting_date'] = '';
-        $termijnLine['due_date'] = '';
-        $termijnLine['closed_at_date'] = '';
-
-        $ledgerMatch = finrap_find_customer_ledger_match_for_termijn(
-            finance_to_float($termijnLine['amount'] ?? 0.0),
-            $customerRows,
-            $usedEntryNos
-        );
-        if ($ledgerMatch === null) {
+        if (!finrap_termijn_line_is_fully_invoiced($termijnLine)) {
+            $termijnLine = finrap_blank_termijn_invoice_fields($termijnLine, 'not_invoiced');
             continue;
         }
 
-        $termijnLine['status'] = 'invoiced';
-        $termijnLine['ledger_description'] = trim((string) ($ledgerMatch['Description'] ?? ''));
-
-        $postingDate = trim((string) ($ledgerMatch['Posting_Date'] ?? ''));
-        if (!finrap_is_bc_blank_date($postingDate)) {
-            $termijnLine['posting_date'] = $postingDate;
+        $termijnLine = finrap_blank_termijn_invoice_fields($termijnLine, 'invoiced');
+        $matchIndex = $assignments[$termijnIndex] ?? null;
+        if (!is_int($matchIndex) || !is_array($invoiceLines[$matchIndex] ?? null)) {
+            continue;
         }
 
-        $dueDate = trim((string) ($ledgerMatch['Due_Date'] ?? ''));
-        if (!finrap_is_bc_blank_date($dueDate)) {
-            $termijnLine['due_date'] = $dueDate;
-        }
-
-        $closedAtDate = trim((string) ($ledgerMatch['Closed_at_Date'] ?? ''));
-        if (!finrap_is_bc_blank_date($closedAtDate)) {
-            $termijnLine['status'] = 'paid';
-            $termijnLine['closed_at_date'] = $closedAtDate;
-        }
+        $termijnLine = finrap_apply_customer_ledger_document_to_termijn(
+            $termijnLine,
+            (string) ($invoiceLines[$matchIndex]['Document_No'] ?? ''),
+            $customerRows
+        );
     }
     unset($termijnLine);
 
     return $termijnLines;
+}
+
+function finrap_termijn_line_is_fully_invoiced(array $termijnLine): bool
+{
+    return finance_planning_line_is_fully_invoiced(
+        finance_to_float($termijnLine['qty_invoiced'] ?? $termijnLine['Qty_Invoiced'] ?? 0.0),
+        finance_to_float($termijnLine['quantity'] ?? $termijnLine['Quantity'] ?? 0.0)
+    );
 }
 
 function finrap_map_termijn_line_from_planning_row(array $contractRow): array
@@ -1908,6 +2128,8 @@ function finrap_map_termijn_line_from_planning_row(array $contractRow): array
         'description_2' => trim((string) ($contractRow['Description_2'] ?? '')),
         'change_order_no' => trim((string) ($contractRow[FINRAP_PROJECT_TASK_CHANGE_ORDER_FIELD] ?? '')),
         'amount' => finance_to_float($contractRow[FINRAP_BILLABLE_PLANNING_AMOUNT_FIELD] ?? 0.0),
+        'quantity' => finance_to_float($contractRow['Quantity'] ?? 0.0),
+        'qty_invoiced' => finance_to_float($contractRow['Qty_Invoiced'] ?? 0.0),
         'planning_date' => (string) ($contractRow['Planning_Date'] ?? ''),
         'invoiced_amount' => finance_to_float($contractRow[FINRAP_BILLABLE_PLANNING_INVOICED_FIELD] ?? 0.0),
     ];
@@ -1917,9 +2139,7 @@ function finrap_billable_planning_select(): string
 {
     return 'Line_No,Line_Type,Job_Task_No,Type,No,Description,Description_2,Document_No,'
         . FINRAP_BILLABLE_PLANNING_AMOUNT_FIELD
-        . ',Qty_Invoiced,Planning_Date,'
-        . FINRAP_BILLABLE_PLANNING_INVOICED_FIELD
-        . ','
+        . ',Quantity,Qty_Invoiced,Planning_Date,'
         . FINRAP_PROJECT_TASK_CHANGE_ORDER_FIELD;
 }
 
@@ -2450,7 +2670,9 @@ function finrap_parse_gl_revenue_planning_totals(array $planningRows, array $cha
 
         $group = finrap_planning_row_change_order_group($planningRow, $changeOrderByTask);
         $contractAmount = finance_to_float($planningRow[FINRAP_BILLABLE_PLANNING_AMOUNT_FIELD] ?? 0.0);
-        $invoicedAmount = finance_to_float($planningRow[FINRAP_BILLABLE_PLANNING_INVOICED_FIELD] ?? 0.0);
+        $invoicedAmount = finrap_planning_row_is_billable_line_type($planningRow)
+            ? finance_column_installments_invoiced_planning_line($planningRow)
+            : 0.0;
 
         $contractByGroup[$group] = finance_add_amount((float) ($contractByGroup[$group] ?? 0.0), $contractAmount);
         $invoicedByGroup[$group] = finance_add_amount((float) ($invoicedByGroup[$group] ?? 0.0), $invoicedAmount);
@@ -4104,8 +4326,15 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
     $termijnLines = finrap_sort_termijn_lines_by_change_order($termijnLines);
 
     try {
+        $finance = new ProjectFinanceService($company, $environment);
+        $salesInvoiceRows = $finance->getProjectSalesInvoiceLines($projectNo, $ttl);
+    } catch (Throwable $ignoredSalesInvoiceLoadError) {
+        $salesInvoiceRows = [];
+    }
+
+    try {
         $customerUrl = finrap_company_entity_url_with_query($baseUrl, $environment, $company, 'Customer_Ledger_Entries', [
-            '$select' => 'Entry_No,Amount_LCY,Remaining_Amt_LCY,Sales_LCY,Posting_Date,Due_Date,Closed_at_Date,Description',
+            '$select' => finrap_customer_ledger_termijn_select(),
             '$filter' => "Global_Dimension_2_Code eq '" . $escapedProject . "'",
         ]);
         $customerRows = odata_get_all($customerUrl, $auth, $ttl);
@@ -4113,7 +4342,12 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
         $customerRows = [];
     }
 
-    $termijnLines = finrap_enrich_termijn_lines_with_customer_ledger($termijnLines, $customerRows);
+    $termijnLines = finrap_enrich_termijn_lines_with_invoices(
+        $termijnLines,
+        $salesInvoiceRows,
+        $customerRows,
+        $projectNo
+    );
     $modal['termijn_lines'] = $termijnLines;
 
     $modal['installments_received'] = finance_column_installments_received($customerRows);
