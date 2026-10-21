@@ -15,3 +15,7 @@ Met `$mimirApi` gezet gaan OData-fetches (live pagina's én `nightly.php` / CLI)
 `web/nightly.php` laadt `auth.php` vóór de OData-calls, zodat de fallback ook in cron/CLI de BC-credentials heeft. Webrequests gebruiken een Mímir-timeout van ongeveer 90 seconden; CLI houdt de lange timeout (600 seconden). De directe fallback gebruikt het environment van het gevraagde bedrijf en de bijbehorende `$auth_list`-credentials.
 
 `web/odata.php` blijft verder onaangeroerd. Goedgekeurde uitzondering voor deze fallback: `odata_get_all` heeft een korte afslag; de fallbacklogica staat in `web/mimir_odata.php`.
+
+## Analytics
+
+`web/analytics/analytics.sqlite` (en `*.sqlite-*`) blijft op de server staan bij een deploy: de FTP-mirror slaat die bestanden al over. Dezelfde mirror slaat `.htaccess` over, dus een gecommit bestand komt niet mee en een bestaand bestand wordt niet gewist. `analytics.php` schrijft `web/analytics/.htaccess` als die ontbreekt (of vult hem aan als het woord `sqlite` er nog niet in staat), zodat Apache de database weigert en `analytics.php` zelf bereikbaar blijft.
