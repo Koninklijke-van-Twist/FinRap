@@ -5219,6 +5219,8 @@ function finrap_append_sap_group_row(array $displayTaskRows, array $allTaskRows)
         'Is_Total_Row' => false,
         'Is_Sap_Group_Row' => true,
         'Sap_Task_Codes' => array_map(static fn(array $row): string => (string) $row['Cost_Group_Code'], $sapRows),
+        // Alleen voor weergave in de detailtabel; telt niet mee in totalen.
+        'Sap_Detail_Rows' => array_map(static fn(array $row): array => finrap_with_derived_cost_totals($row), array_values($sapRows)),
     ]);
 
     $sumFields = ['Contract_Value', 'Budget_Revenue', 'Budget_Cost', 'Budget_Hours', 'EAC', 'EAC_Hours', 'Booked_Hours',

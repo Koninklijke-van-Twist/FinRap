@@ -446,11 +446,22 @@ function finrap_render_cost_group_table(array $taskRows, bool $totalsOnly = fals
     echo '</tr></thead>';
     echo '<tbody>';
 
+    $renderRows = [];
     foreach ($taskRows as $row) {
         if (!is_array($row)) {
             continue;
         }
+        $renderRows[] = $row;
+        if (!$totalsOnly && (bool) ($row['Is_Sap_Group_Row'] ?? false)) {
+            foreach ((array) ($row['Sap_Detail_Rows'] ?? []) as $sapDetailRow) {
+                if (is_array($sapDetailRow)) {
+                    $renderRows[] = $sapDetailRow + ['Is_Sap_Detail_Row' => true];
+                }
+            }
+        }
+    }
 
+    foreach ($renderRows as $row) {
         $isTotalRow = (bool) ($row['Is_Total_Row'] ?? false);
         $isSapGroupRow = (bool) ($row['Is_Sap_Group_Row'] ?? false);
         if ($totalsOnly && !$isTotalRow && !$isSapGroupRow) {
@@ -465,7 +476,7 @@ function finrap_render_cost_group_table(array $taskRows, bool $totalsOnly = fals
             $descriptionValue = (string) ($row['Cost_Group_Description'] ?? '');
         } elseif (preg_match('/^\d{3}-\d{3}-000$/', $taskCode) === 1 && $isTotalRow) {
             $descriptionValue = "\u{00A0}\u{00A0}" . $descriptionValue;
-        } elseif (preg_match('/^\d{3}-\d{3}-\d{3}$/', $taskCode) === 1 && !$isTotalRow) {
+        } elseif ((preg_match('/^\d{3}-\d{3}-\d{3}$/', $taskCode) === 1 || (bool) ($row['Is_Sap_Detail_Row'] ?? false)) && !$isTotalRow) {
             $descriptionValue = "\u{00A0}\u{00A0}\u{00A0}\u{00A0}" . $descriptionValue;
         }
 
