@@ -484,6 +484,7 @@ function finance_ledger_type_is_purchase(string $type): bool
         || $normalized === 'artikel'
         || $normalized === 'g/l account'
         || $normalized === 'gb-rekening'
+        || $normalized === 'grootboekrekening'
         || $normalized === 'glaccount'
         || $normalized === 'gl account';
 }

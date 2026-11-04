@@ -87,6 +87,25 @@ if (str_contains($uri, '/mimir/api/query.php')) {
         $body = [];
     }
     $selectList = is_array($body['select'] ?? null) ? $body['select'] : explode(',', (string) ($body['select'] ?? ''));
+    $mockFilter = (string) ($body['filter'] ?? '');
+    if (($body['table'] ?? '') === 'PurchaseLines') {
+        echo json_encode(['value' => [
+            ['Document_No' => 'PO_OK', 'Line_No' => 10000, 'Job_Task_No' => 'T1', 'No' => 'A'],
+            ['Document_No' => 'PO_BAD', 'Line_No' => 10000, 'Job_Task_No' => 'T1', 'No' => 'B'],
+        ]]);
+        exit;
+    }
+    if (($body['table'] ?? '') === 'PurchaseReceiptLines') {
+        if (!str_contains($mockFilter, 'LVS_Order_No') || str_contains($mockFilter, 'PO_BAD')) {
+            http_response_code(502);
+            echo json_encode(['error' => 'BC HTTP 400: Attempted to divide by zero.']);
+            exit;
+        }
+        echo json_encode(['value' => [
+            ['LVS_Order_No' => 'PO_OK', 'LVS_Order_Line_No' => 10000, 'LVS_Amt_Rcd_Not_Invoiced' => 321.5],
+        ]]);
+        exit;
+    }
     if (($body['table'] ?? '') === 'JobLedgerEntries' && in_array('Type', $selectList, true)) {
         http_response_code(400);
         echo json_encode(['error' => 'Onbekende kolom: Type']);
@@ -367,6 +386,19 @@ try {
         json_encode($ledger, JSON_UNESCAPED_UNICODE)
     );
     test_assert('onbekende kolom opent circuit-breaker niet', odata_mimir_circuit_open() === false);
+    // BC 'divide by zero' (502 via Mímir) bij één order: per order opnieuw, alleen die order valt weg.
+    $purchaseRows = finrap_fetch_purchase_lines_for_project('', 'Production', 'Koninklijke van Twist', [], 30, "Job_No eq 'PRJ1'");
+    $amountsByOrder = [];
+    foreach ($purchaseRows as $purchaseRow) {
+        $amountsByOrder[$purchaseRow['Document_No']] = $purchaseRow['Amt_Rcd_Not_Invoiced'];
+    }
+    test_assert(
+        'divide by zero: overige orders tellen mee, foute order valt weg',
+        ($amountsByOrder['PO_OK'] ?? null) === 321.5 && ($amountsByOrder['PO_BAD'] ?? null) === 0.0,
+        json_encode($amountsByOrder)
+    );
+    test_assert('divide by zero opent circuit-breaker niet', odata_mimir_circuit_open() === false);
+    test_assert('BC-fout herkend', odata_mimir_is_bc_request_error(502, 'BC HTTP 400: x') && !odata_mimir_is_bc_request_error(502, 'Bad Gateway'));
     test_assert('Mímir slaat FinRap-filecache over', count($afterCache) === count($beforeCache));
 
     $companyRows = odata_get_all('https://bc.example/Sandbox/ODataV4/Company?$select=Name', [], 30);

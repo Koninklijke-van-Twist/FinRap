@@ -107,6 +107,19 @@ class OdataMimirRequestRejected extends Exception
 {
 }
 
+/**
+ * BC wees het verzoek zelf af en Mímir gaf dat door (bv. 'Attempted to divide by zero' in een
+ * paginaberekening, BC 400 doorgegeven als 502). Mímir is gezond: afgewezen request, geen breaker.
+ */
+function odata_mimir_is_bc_request_error(int $code, string $message): bool
+{
+    if (stripos($message, 'divide by zero') !== false) {
+        return true;
+    }
+
+    return $code === 502 && preg_match('/\bHTTP 4\d\d from OData\b|\bBC\b[^0-9]{0,20}\b4\d\d\b/i', $message) === 1;
+}
+
 function odata_mimir_fail(Exception $exception): void
 {
     odata_mimir_trip($exception);
@@ -510,7 +523,7 @@ function odata_mimir_request(string $method, string $path, ?array $jsonBody = nu
     $decoded = json_decode($raw, true);
     if ($code < 200 || $code >= 300) {
         $message = is_array($decoded) ? (string) ($decoded['error'] ?? $raw) : $raw;
-        if ($code === 400 || $code === 404) {
+        if ($code === 400 || $code === 404 || odata_mimir_is_bc_request_error($code, $message)) {
             throw new OdataMimirRequestRejected('Mímir HTTP ' . $code . ': ' . $message, $code);
         }
         odata_mimir_fail(new Exception('Mímir HTTP ' . $code . ': ' . $message));
@@ -521,6 +534,9 @@ function odata_mimir_request(string $method, string $path, ?array $jsonBody = nu
     $errorField = $decoded['error'] ?? null;
     if ($errorField !== null && $errorField !== '' && $errorField !== false) {
         $message = is_string($errorField) ? $errorField : (string) json_encode($errorField, JSON_UNESCAPED_UNICODE);
+        if (odata_mimir_is_bc_request_error($code, $message)) {
+            throw new OdataMimirRequestRejected('Mímir error: ' . $message, $code);
+        }
         odata_mimir_fail(new Exception('Mímir error: ' . $message));
     }
     return $decoded;

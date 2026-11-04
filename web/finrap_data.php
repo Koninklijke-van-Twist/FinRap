@@ -40,11 +40,8 @@ const FINRAP_STANDARD_COSTING_METHOD = 'Standard';
 const FINRAP_ITEM_COSTING_METHOD_CHUNK_SIZE = 40;
 const FINRAP_TO_BOOK_COST_FIELD = 'To_Book_Cost';
 const FINRAP_COSTS_TOTAL_FIELD = 'Costs_Total';
-const FINRAP_PURCHASE_LINE_ENTITY_SETS = [
-    'Purchase_Order_Lines',
-    'PurchaseLines',
-    'Purchase_Lines',
-];
+// PurchaseLines (sleutel Document_Type, Document_No, Line_No) is de enige bestaande inkoopregelset.
+const FINRAP_PURCHASE_LINE_ENTITY_SET = 'PurchaseLines';
 const FINRAP_BUDGET_HOURS_FILTER_TYPE_FIELD = 'Type';
 const FINRAP_BUDGET_HOURS_FILTER_RESOURCE_TYPE_FIELD = 'Resource_Type';
 const FINRAP_BUDGET_HOURS_FILTER_UOM_FIELD = 'Unit_of_Measure_Code';
@@ -3371,35 +3368,88 @@ function finrap_fetch_purchase_lines_for_project(
     int $ttl,
     string $projectFilter
 ): array {
-    $selectVariants = [
-        'Job_Task_No,No,LVS_Completely_Received,Completely_Received,Qty_Posted,Quantity_Received,Qty_Received,Direct_Unit_Cost,Unit_Cost_LCY,Amt_Rcd_Not_Invoiced,Line_Amount',
-        'Job_Task_No,No,Completely_Received,Qty_Posted,Quantity_Received,Direct_Unit_Cost,Amt_Rcd_Not_Invoiced,Line_Amount',
-        'Job_Task_No,No,LVS_Completely_Received,Quantity_Received,Direct_Unit_Cost,Line_Amount',
-        'Job_Task_No,Completely_Received,Quantity_Received,Direct_Unit_Cost,Line_Amount',
-    ];
+    $rows = finrap_odata_get_all_with_select_fallback(
+        $baseUrl,
+        $environment,
+        $company,
+        $auth,
+        $ttl,
+        FINRAP_PURCHASE_LINE_ENTITY_SET,
+        ['Document_No,Line_No,Job_Task_No,No'],
+        $projectFilter . " and Document_Type eq 'Order'"
+    );
+    $rows = is_array($rows) ? $rows : [];
 
-    foreach (FINRAP_PURCHASE_LINE_ENTITY_SETS as $entitySet) {
-        $entitySet = trim((string) $entitySet);
-        if ($entitySet === '') {
-            continue;
-        }
-
-        $rows = finrap_odata_get_all_with_select_fallback(
-            $baseUrl,
-            $environment,
-            $company,
-            $auth,
-            $ttl,
-            $entitySet,
-            $selectVariants,
-            $projectFilter
+    $receiptSelect = ['LVS_Order_No,LVS_Order_Line_No,LVS_Amt_Rcd_Not_Invoiced'];
+    $fetchReceipts = static function (string $filter) use ($baseUrl, $environment, $company, $auth, $ttl, $receiptSelect): ?array {
+        return finrap_odata_get_all_with_select_fallback(
+            $baseUrl, $environment, $company, $auth, $ttl, 'PurchaseReceiptLines', $receiptSelect, $filter
         );
-        if (is_array($rows)) {
-            return $rows;
+    };
+
+    $receiptRows = $fetchReceipts($projectFilter);
+    if (!is_array($receiptRows)) {
+        // BC kan per order falen (bv. 'divide by zero' op de pagina): per ordernummer opnieuw, foute orders vallen weg.
+        $receiptRows = [];
+        $skippedOrders = [];
+        $fetchedOrders = [];
+        foreach ($rows as $row) {
+            $orderNo = is_array($row) ? trim((string) ($row['Document_No'] ?? '')) : '';
+            if ($orderNo === '' || isset($skippedOrders[$orderNo]) || isset($fetchedOrders[$orderNo])) {
+                continue;
+            }
+            $fetchedOrders[$orderNo] = true;
+            $orderRows = $fetchReceipts($projectFilter . " and LVS_Order_No eq '" . str_replace("'", "''", $orderNo) . "'");
+            if (is_array($orderRows)) {
+                array_push($receiptRows, ...$orderRows);
+            } else {
+                $skippedOrders[$orderNo] = $orderNo;
+            }
+        }
+        if ($skippedOrders !== []) {
+            error_log('FinRap: PurchaseReceiptLines overgeslagen voor ' . $projectFilter . ', orders: ' . implode(', ', $skippedOrders));
         }
     }
 
-    return [];
+    return finrap_map_purchase_lines($rows, $receiptRows);
+}
+
+/**
+ * PurchaseLines (alleen Document_Type 'Order') bepaalt welke orderregels meetellen.
+ * Ontvangen bedrag excl. btw = som PurchaseReceiptLines.LVS_Amt_Rcd_Not_Invoiced per
+ * LVS_Order_No/LVS_Order_Line_No. Ontvangen-niet-gefactureerd heeft nog geen projectpost,
+ * dus Qty_Posted = 0 (geen planning-lookup nodig).
+ */
+function finrap_map_purchase_lines(array $rows, array $receiptRows = []): array
+{
+    $receivedByLine = [];
+    foreach ($receiptRows as $receiptRow) {
+        if (!is_array($receiptRow)) {
+            continue;
+        }
+        $lineKey = strtolower(trim((string) ($receiptRow['LVS_Order_No'] ?? ''))) . '|'
+            . (int) ($receiptRow['LVS_Order_Line_No'] ?? 0);
+        $receivedByLine[$lineKey] = finance_add_amount(
+            finance_to_float($receivedByLine[$lineKey] ?? 0.0),
+            finance_to_float($receiptRow['LVS_Amt_Rcd_Not_Invoiced'] ?? 0.0)
+        );
+    }
+
+    $mapped = [];
+    foreach ($rows as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+
+        // LVS_Amt_Rcd_Not_Invoiced is per ontvangstregel exact; ook deels ontvangen regels tellen mee.
+        $row['Completely_Received'] = true;
+        $lineKey = strtolower(trim((string) ($row['Document_No'] ?? ''))) . '|' . (int) ($row['Line_No'] ?? 0);
+        $row['Amt_Rcd_Not_Invoiced'] = finance_to_float($receivedByLine[$lineKey] ?? 0.0);
+        $row['Qty_Posted'] = 0.0;
+        $mapped[] = $row;
+    }
+
+    return $mapped;
 }
 
 function finrap_row_completely_received_flag(array $row): mixed
@@ -4450,10 +4500,7 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
         $auth,
         $ttl,
         'JobLedgerEntries',
-        [
-            'Job_Task_No,Total_Cost_LCY,Type',
-            'Job_Task_No,Total_Cost_LCY',
-        ],
+        ['Job_Task_No,Total_Cost_LCY'],
         $projectFilter
     );
     if (!is_array($ledgerRows)) {
@@ -4489,8 +4536,7 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
         $ttl,
         FINRAP_PLANNING_LINES_ENTITY_SET,
         [
-            'Job_Task_No,No,Qty_to_Transfer_to_Journal,Unit_Cost_LCY,Qty_Posted,LVS_Completely_Received,Completely_Received,Quantity_Received',
-            'Job_Task_No,No,Qty_to_Transfer_to_Journal,Unit_Cost_LCY,Qty_Posted,Completely_Received,Quantity_Received',
+            'Job_Task_No,No,Qty_to_Transfer_to_Journal,Unit_Cost_LCY,Qty_Posted',
             'Job_Task_No,No,Qty_to_Transfer_to_Journal,Unit_Cost_LCY',
         ],
         $projectFilter
@@ -4563,18 +4609,13 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
         true
     );
     $receivedNotPostedByTask = finrap_merge_amount_maps($receivedNotPostedByTask, $planningReceivedByTask);
-    $ledgerHasEntries = finrap_ledger_rows_have_entries($ledgerRows);
-    $ledgerHasType = finrap_ledger_rows_have_type($ledgerRows);
-    $applyReceivedNotPosted = finance_column_received_not_posted_allowed($ledgerHasEntries, $ledgerHasType);
-    $bookedPurchaseByTask = $ledgerHasType
-        ? finrap_parse_booked_purchase_costs_by_task($ledgerRows)
-        : [];
+    // Ontvangen-niet-gefactureerd heeft per definitie nog geen projectpost: geen aftrek van geboekte inkoop.
     finrap_apply_to_book_costs_to_task_rows(
         $taskRowsByKey,
         $unpostedCostsByTask,
         $receivedNotPostedByTask,
-        $bookedPurchaseByTask,
-        $applyReceivedNotPosted
+        [],
+        true
     );
 
     $baselineAmountsByTask = finrap_parse_baseline_amounts_by_task($baselineRows, array_keys($taskRowsByKey));
