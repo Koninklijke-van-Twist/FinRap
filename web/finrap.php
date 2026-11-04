@@ -452,7 +452,8 @@ function finrap_render_cost_group_table(array $taskRows, bool $totalsOnly = fals
         }
 
         $isTotalRow = (bool) ($row['Is_Total_Row'] ?? false);
-        if ($totalsOnly && !$isTotalRow) {
+        $isSapGroupRow = (bool) ($row['Is_Sap_Group_Row'] ?? false);
+        if ($totalsOnly && !$isTotalRow && !$isSapGroupRow) {
             continue;
         }
 
@@ -478,6 +479,10 @@ function finrap_render_cost_group_table(array $taskRows, bool $totalsOnly = fals
             } elseif (preg_match('/^\d{3}-\d{3}-000$/', $taskCode) === 1) {
                 $rowClass .= ' is-minor-total-row';
             }
+        }
+
+        if ($isSapGroupRow) {
+            $rowClass = 'is-total-row is-major-total-row is-sap-group-row';
         }
 
         if ($hideAsAllZeroRow) {
