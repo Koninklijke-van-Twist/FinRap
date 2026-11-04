@@ -212,9 +212,7 @@ function finrap_cost_group_value_tooltip_html(string $columnKey): string
         return finrap_tooltip_formula_html([
             ['type' => 'text', 'text' => '('],
             ['type' => 'ref', 'table' => 'PurchaseReceiptLines', 'field' => 'LVS_Amt_Rcd_Not_Invoiced'],
-            ['type' => 'text', 'text' => ', '],
-            ['type' => 'ref', 'table' => 'PurchaseLines', 'field' => 'Outstanding_Quantity'],
-            ['type' => 'text', 'text' => ' = 0, Qty_Posted = 0) + ('],
+            ['type' => 'text', 'text' => ', Qty_Posted = 0) + ('],
             ['type' => 'ref', 'table' => FINRAP_PLANNING_LINES_ENTITY_SET, 'field' => 'Qty_to_Transfer_to_Journal'],
             ['type' => 'text', 'text' => ' × '],
             ['type' => 'ref', 'table' => FINRAP_PLANNING_LINES_ENTITY_SET, 'field' => 'Unit_Cost_LCY'],

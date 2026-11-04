@@ -313,22 +313,22 @@ test_assert_float(
     finance_to_float($taskRowsTyped['001-000-000']['To_Book_Cost'] ?? 0.0)
 );
 
-// PurchaseLines: Outstanding_Quantity 0 = volledig ontvangen; bedrag excl. btw uit PurchaseReceiptLines.
+// PurchaseLines (orders): ook deels ontvangen telt mee; bedrag excl. btw uit PurchaseReceiptLines.
 $mappedPurchase = finrap_map_purchase_lines([
-    ['Document_No' => 'PO1', 'Job_Task_No' => 'T1', 'No' => 'A', 'Line_No' => 10, 'Outstanding_Quantity' => 0],
-    ['Document_No' => 'PO1', 'Job_Task_No' => 'T1', 'No' => 'B', 'Line_No' => 20, 'Outstanding_Quantity' => 3],
+    ['Document_No' => 'PO1', 'Job_Task_No' => 'T1', 'No' => 'A', 'Line_No' => 10],
+    ['Document_No' => 'PO1', 'Job_Task_No' => 'T1', 'No' => 'B', 'Line_No' => 20],
 ], [
     ['LVS_Order_No' => 'PO1', 'LVS_Order_Line_No' => 10, 'LVS_Amt_Rcd_Not_Invoiced' => 200.0],
     ['LVS_Order_No' => 'PO1', 'LVS_Order_Line_No' => 10, 'LVS_Amt_Rcd_Not_Invoiced' => 50.0],
     ['LVS_Order_No' => 'PO1', 'LVS_Order_Line_No' => 20, 'LVS_Amt_Rcd_Not_Invoiced' => 100.0],
 ]);
 $purchaseByTask = finrap_parse_received_not_posted_by_task($mappedPurchase, []);
-test_assert_float('PurchaseLines volledig ontvangen telt in te boeken (excl. btw, zonder planning-lookup)', 250.0, finance_to_float($purchaseByTask['t1'] ?? 0.0));
+test_assert_float('PurchaseLines ontvangen-niet-gefactureerd telt in te boeken (excl. btw, ook deels ontvangen)', 350.0, finance_to_float($purchaseByTask['t1'] ?? 0.0));
 
 // 153390 / taak 4066162: veel andere facturen geboekt op de taak + PO 4500111639 ontvangen-niet-gefactureerd.
 $rows153390 = ['4066162' => ['Booked_Cost' => 750000.0]];
 $received153390 = finrap_parse_received_not_posted_by_task(finrap_map_purchase_lines(
-    [['Document_No' => '4500111639', 'Line_No' => 10000, 'Job_Task_No' => '4066162', 'No' => 'X', 'Outstanding_Quantity' => 0]],
+    [['Document_No' => '4500111639', 'Line_No' => 10000, 'Job_Task_No' => '4066162', 'No' => 'X']],
     [['LVS_Order_No' => '4500111639', 'LVS_Order_Line_No' => 10000, 'LVS_Amt_Rcd_Not_Invoiced' => 131867.54]]
 ), []);
 finrap_apply_to_book_costs_to_task_rows($rows153390, [], $received153390, [], true);

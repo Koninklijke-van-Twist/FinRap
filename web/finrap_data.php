@@ -3375,37 +3375,39 @@ function finrap_fetch_purchase_lines_for_project(
         $auth,
         $ttl,
         FINRAP_PURCHASE_LINE_ENTITY_SET,
-        ['Document_No,Line_No,Job_Task_No,No,Outstanding_Quantity'],
+        ['Document_No,Line_No,Job_Task_No,No'],
         $projectFilter . " and Document_Type eq 'Order'"
     );
     $rows = is_array($rows) ? $rows : [];
 
-    $orderNos = [];
-    foreach ($rows as $row) {
-        $orderNo = is_array($row) ? trim((string) ($row['Document_No'] ?? '')) : '';
-        if ($orderNo !== '') {
-            $orderNos[$orderNo] = $orderNo;
-        }
-    }
-
-    $receiptRows = [];
-    foreach (array_chunk(array_values($orderNos), FINRAP_ITEM_COSTING_METHOD_CHUNK_SIZE) as $chunk) {
-        $filters = [];
-        foreach ($chunk as $orderNo) {
-            $filters[] = "LVS_Order_No eq '" . str_replace("'", "''", $orderNo) . "'";
-        }
-        $chunkRows = finrap_odata_get_all_with_select_fallback(
-            $baseUrl,
-            $environment,
-            $company,
-            $auth,
-            $ttl,
-            'PurchaseReceiptLines',
-            ['LVS_Order_No,LVS_Order_Line_No,LVS_Amt_Rcd_Not_Invoiced'],
-            '(' . implode(' or ', $filters) . ')'
+    $receiptSelect = ['LVS_Order_No,LVS_Order_Line_No,LVS_Amt_Rcd_Not_Invoiced'];
+    $fetchReceipts = static function (string $filter) use ($baseUrl, $environment, $company, $auth, $ttl, $receiptSelect): ?array {
+        return finrap_odata_get_all_with_select_fallback(
+            $baseUrl, $environment, $company, $auth, $ttl, 'PurchaseReceiptLines', $receiptSelect, $filter
         );
-        if (is_array($chunkRows)) {
-            array_push($receiptRows, ...$chunkRows);
+    };
+
+    $receiptRows = $fetchReceipts($projectFilter);
+    if (!is_array($receiptRows)) {
+        // BC kan per order falen (bv. 'divide by zero' op de pagina): per ordernummer opnieuw, foute orders vallen weg.
+        $receiptRows = [];
+        $skippedOrders = [];
+        $fetchedOrders = [];
+        foreach ($rows as $row) {
+            $orderNo = is_array($row) ? trim((string) ($row['Document_No'] ?? '')) : '';
+            if ($orderNo === '' || isset($skippedOrders[$orderNo]) || isset($fetchedOrders[$orderNo])) {
+                continue;
+            }
+            $fetchedOrders[$orderNo] = true;
+            $orderRows = $fetchReceipts($projectFilter . " and LVS_Order_No eq '" . str_replace("'", "''", $orderNo) . "'");
+            if (is_array($orderRows)) {
+                array_push($receiptRows, ...$orderRows);
+            } else {
+                $skippedOrders[$orderNo] = $orderNo;
+            }
+        }
+        if ($skippedOrders !== []) {
+            error_log('FinRap: PurchaseReceiptLines overgeslagen voor ' . $projectFilter . ', orders: ' . implode(', ', $skippedOrders));
         }
     }
 
@@ -3413,7 +3415,7 @@ function finrap_fetch_purchase_lines_for_project(
 }
 
 /**
- * PurchaseLines kent geen Completely_Received: volledig ontvangen = Outstanding_Quantity 0.
+ * PurchaseLines (alleen Document_Type 'Order') bepaalt welke orderregels meetellen.
  * Ontvangen bedrag excl. btw = som PurchaseReceiptLines.LVS_Amt_Rcd_Not_Invoiced per
  * LVS_Order_No/LVS_Order_Line_No. Ontvangen-niet-gefactureerd heeft nog geen projectpost,
  * dus Qty_Posted = 0 (geen planning-lookup nodig).
@@ -3439,9 +3441,8 @@ function finrap_map_purchase_lines(array $rows, array $receiptRows = []): array
             continue;
         }
 
-        $row['Completely_Received'] = array_key_exists('Outstanding_Quantity', $row)
-            && $row['Outstanding_Quantity'] !== null
-            && abs(finance_to_float($row['Outstanding_Quantity'])) < 0.000001;
+        // LVS_Amt_Rcd_Not_Invoiced is per ontvangstregel exact; ook deels ontvangen regels tellen mee.
+        $row['Completely_Received'] = true;
         $lineKey = strtolower(trim((string) ($row['Document_No'] ?? ''))) . '|' . (int) ($row['Line_No'] ?? 0);
         $row['Amt_Rcd_Not_Invoiced'] = finance_to_float($receivedByLine[$lineKey] ?? 0.0);
         $row['Qty_Posted'] = 0.0;
