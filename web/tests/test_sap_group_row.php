@@ -49,6 +49,22 @@ test_assert('SAP-herkenning', finrap_is_sap_task_no('4046560') && !finrap_is_sap
 $sapOnly = finrap_append_sap_group_row([['Cost_Group_Code' => '000-000-010', 'Is_Total_Row' => false]], [$sapA, $sapB]);
 test_assert('SAP-project toont SAP-rij', (end($sapOnly)['Cost_Group_Code'] ?? '') === 'SAP' && abs(end($sapOnly)['Booked_Hours'] - 4.0) < 0.000001);
 
+// 153586: PHP maakt van array-key '4067021' een int; VC Kosten mag daardoor niet wegvallen.
+$taskRowsByKey = ['000-000-010' => [], '4067021' => [], '4067022' => [], '153586-m020-v06' => []];
+$projectTaskRows = [
+    ['Job_No' => '153586', 'Job_Task_No' => '4067021', 'LVS_Baseline_Total_Cost' => 4789, 'KVT_EAC_Total_Unit_Cost' => 10, 'LVS_Registered_Purchases_Amt' => 5],
+    ['Job_No' => '153586', 'Job_Task_No' => '4067022', 'LVS_Baseline_Total_Cost' => 801],
+    ['Job_No' => '153586', 'Job_Task_No' => '153586-M020-V06', 'LVS_Baseline_Total_Cost' => 999],
+];
+$vc = finrap_parse_project_task_baseline_costs_by_task($projectTaskRows, array_keys($taskRowsByKey), '153586');
+test_assert('SAP VC Kosten 4067021', abs(($vc['4067021'] ?? 0) - 4789) < 0.000001, json_encode($vc));
+test_assert('SAP VC Kosten 4067022', abs(($vc['4067022'] ?? 0) - 801) < 0.000001);
+test_assert('Niet-SAP taak blijft buiten', !isset($vc['153586-m020-v06']));
+$eac = finrap_parse_project_task_eac_costs_by_task($projectTaskRows, array_keys($taskRowsByKey), '153586');
+test_assert('SAP EAC Kosten', abs(($eac['4067021'] ?? 0) - 10) < 0.000001);
+$obl = finrap_parse_project_task_amounts_by_task($projectTaskRows, array_keys($taskRowsByKey), '153586', 'LVS_Registered_Purchases_Amt');
+test_assert('SAP verplichtingen', abs(($obl['4067021'] ?? 0) - 5) < 0.000001);
+
 if ($failures > 0) {
     echo "\n{$failures} failure(s)\n";
     exit(1);

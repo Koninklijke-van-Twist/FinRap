@@ -2530,10 +2530,10 @@ function finrap_fetch_budget_hours_by_task(
 
     $allowedLookup = [];
     foreach ($allowedTaskKeys as $allowedTaskKey) {
-        if (!is_string($allowedTaskKey) || trim($allowedTaskKey) === '') {
+        if ((!is_string($allowedTaskKey) && !is_int($allowedTaskKey)) || trim((string) $allowedTaskKey) === '') {
             continue;
         }
-        $allowedLookup[strtolower(trim($allowedTaskKey))] = true;
+        $allowedLookup[strtolower(trim((string) $allowedTaskKey))] = true;
     }
 
     $hoursByTask = [];
@@ -2758,10 +2758,10 @@ function finrap_parse_baseline_amounts_by_task(array $baselineRows, array $allow
 {
     $allowedLookup = [];
     foreach ($allowedTaskKeys as $allowedTaskKey) {
-        if (!is_string($allowedTaskKey) || trim($allowedTaskKey) === '') {
+        if ((!is_string($allowedTaskKey) && !is_int($allowedTaskKey)) || trim((string) $allowedTaskKey) === '') {
             continue;
         }
-        $allowedLookup[strtolower(trim($allowedTaskKey))] = true;
+        $allowedLookup[strtolower(trim((string) $allowedTaskKey))] = true;
     }
 
     $costsByTask = [];
@@ -2841,10 +2841,10 @@ function finrap_parse_project_task_contract_by_task(
 ): array {
     $allowedLookup = [];
     foreach ($allowedTaskKeys as $allowedTaskKey) {
-        if (!is_string($allowedTaskKey) || trim($allowedTaskKey) === '') {
+        if ((!is_string($allowedTaskKey) && !is_int($allowedTaskKey)) || trim((string) $allowedTaskKey) === '') {
             continue;
         }
-        $allowedLookup[strtolower(trim($allowedTaskKey))] = true;
+        $allowedLookup[strtolower(trim((string) $allowedTaskKey))] = true;
     }
 
     $contractByTask = [];
@@ -2893,10 +2893,10 @@ function finrap_parse_project_task_amounts_by_task(
 
     $allowedLookup = [];
     foreach ($allowedTaskKeys as $allowedTaskKey) {
-        if (!is_string($allowedTaskKey) || trim($allowedTaskKey) === '') {
+        if ((!is_string($allowedTaskKey) && !is_int($allowedTaskKey)) || trim((string) $allowedTaskKey) === '') {
             continue;
         }
-        $allowedLookup[strtolower(trim($allowedTaskKey))] = true;
+        $allowedLookup[strtolower(trim((string) $allowedTaskKey))] = true;
     }
 
     $amountsByTask = [];
@@ -3171,10 +3171,10 @@ function finrap_sum_project_task_amount_for_task_keys(
 
     $allowedLookup = [];
     foreach ($allowedTaskKeys as $allowedTaskKey) {
-        if (!is_string($allowedTaskKey) || trim($allowedTaskKey) === '') {
+        if ((!is_string($allowedTaskKey) && !is_int($allowedTaskKey)) || trim((string) $allowedTaskKey) === '') {
             continue;
         }
-        $allowedLookup[strtolower(trim($allowedTaskKey))] = true;
+        $allowedLookup[strtolower(trim((string) $allowedTaskKey))] = true;
     }
 
     if ($allowedLookup === []) {
@@ -3667,10 +3667,10 @@ function finrap_aggregate_detail_task_metrics_for_task_keys(array $detailTaskRow
 
     $allowedLookup = [];
     foreach ($allowedTaskKeys as $allowedTaskKey) {
-        if (!is_string($allowedTaskKey) || trim($allowedTaskKey) === '') {
+        if ((!is_string($allowedTaskKey) && !is_int($allowedTaskKey)) || trim((string) $allowedTaskKey) === '') {
             continue;
         }
-        $allowedLookup[strtolower(trim($allowedTaskKey))] = true;
+        $allowedLookup[strtolower(trim((string) $allowedTaskKey))] = true;
     }
 
     $contractValueTotal = 0.0;
