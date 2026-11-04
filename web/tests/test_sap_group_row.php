@@ -38,6 +38,10 @@ test_assert('000 bevat SAP uren', abs($rows[0]['Booked_Hours'] - 14.0) < 0.00000
 test_assert('000 variantie herberekend', abs($rows[0]['Variance_Budget_EAC'] - finance_calculate_result(100.0, 100.0)) < 0.000001);
 $summary = finrap_get_report_summary_totals($rows);
 test_assert('Samenvatting = 000 (geen dubbeltelling)', abs($summary['Booked_Hours'] - $rows[0]['Booked_Hours']) < 0.000001);
+$detailCodes = array_map(static fn(array $r): string => $r['Cost_Group_Code'], $sap['Sap_Detail_Rows']);
+test_assert('SAP detailregels aanwezig', $detailCodes === ['4052840', '4052841'], implode(',', $detailCodes));
+test_assert('SAP detailregel behoudt waarden', abs($sap['Sap_Detail_Rows'][0]['Booked_Hours'] - 2.5) < 0.000001);
+test_assert('SAP detailregels niet los in task_rows', count($rows) === 3);
 test_assert('ASS 150000 en WO niet in SAP', count($sap['Sap_Task_Codes']) === 2);
 test_assert('Geen SAP-rij zonder SAP-taken', count(finrap_append_sap_group_row([$root, $detail], [$root, $detail, $ass, $wo])) === 2);
 test_assert('SAP-herkenning', finrap_is_sap_task_no('4046560') && !finrap_is_sap_task_no('150000') && !finrap_is_sap_task_no('40465601') && !finrap_is_sap_task_no('WO2607807'));
