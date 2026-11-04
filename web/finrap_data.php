@@ -2443,6 +2443,12 @@ function finrap_is_formatted_task_no(string $taskNo): bool
     return preg_match('/^\d{3}-\d{3}-\d{3}$/', trim($taskNo)) === 1;
 }
 
+/** Oude SAP-werkorder als taak: exact 7 cijfers beginnend met 40 (bv. 4052840). */
+function finrap_is_sap_task_no(string $taskNo): bool
+{
+    return preg_match('/^40\d{5}$/', trim($taskNo)) === 1;
+}
+
 function finrap_task_no_to_numeric(string $taskNo): ?int
 {
     $value = trim($taskNo);
@@ -2543,7 +2549,7 @@ function finrap_fetch_budget_hours_by_task(
         }
 
         $taskKey = strtolower($taskNo);
-        if (FINRAP_FORMATTED_TASK_NOS_ONLY && !finrap_is_formatted_task_no($taskNo) && !isset($allowedLookup[$taskKey])) {
+        if (FINRAP_FORMATTED_TASK_NOS_ONLY && !finrap_is_formatted_task_no($taskNo) && !(finrap_is_sap_task_no($taskNo) && isset($allowedLookup[$taskKey]))) {
             continue;
         }
 
@@ -2771,7 +2777,7 @@ function finrap_parse_baseline_amounts_by_task(array $baselineRows, array $allow
         }
 
         $taskKey = strtolower($taskNo);
-        if (FINRAP_FORMATTED_TASK_NOS_ONLY && !finrap_is_formatted_task_no($taskNo) && !isset($allowedLookup[$taskKey])) {
+        if (FINRAP_FORMATTED_TASK_NOS_ONLY && !finrap_is_formatted_task_no($taskNo) && !(finrap_is_sap_task_no($taskNo) && isset($allowedLookup[$taskKey]))) {
             continue;
         }
 
@@ -2857,7 +2863,7 @@ function finrap_parse_project_task_contract_by_task(
         }
 
         $taskKey = strtolower($taskNo);
-        if (FINRAP_FORMATTED_TASK_NOS_ONLY && !finrap_is_formatted_task_no($taskNo) && !isset($allowedLookup[$taskKey])) {
+        if (FINRAP_FORMATTED_TASK_NOS_ONLY && !finrap_is_formatted_task_no($taskNo) && !(finrap_is_sap_task_no($taskNo) && isset($allowedLookup[$taskKey]))) {
             continue;
         }
 
@@ -2909,7 +2915,7 @@ function finrap_parse_project_task_amounts_by_task(
         }
 
         $taskKey = strtolower($taskNo);
-        if (FINRAP_FORMATTED_TASK_NOS_ONLY && !finrap_is_formatted_task_no($taskNo) && !isset($allowedLookup[$taskKey])) {
+        if (FINRAP_FORMATTED_TASK_NOS_ONLY && !finrap_is_formatted_task_no($taskNo) && !(finrap_is_sap_task_no($taskNo) && isset($allowedLookup[$taskKey]))) {
             continue;
         }
 
@@ -4665,6 +4671,10 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
         }
 
         $hasHourDetailRows = true;
+        if (FINRAP_FORMATTED_TASK_NOS_ONLY && !finrap_is_formatted_task_no($hoursTaskNo) && !finrap_is_sap_task_no($hoursTaskNo)) {
+            continue;
+        }
+
         $hoursTaskKey = strtolower($hoursTaskNo);
         $hoursBudgetQuantity = finance_to_float($hoursRow['LVS_Budget_Hours_Quantity'] ?? 0.0);
         $hoursUsedQuantity = finance_to_float($hoursRow['LVS_Used_Hours_Quantity'] ?? 0.0);
@@ -5176,9 +5186,10 @@ function finrap_finalize_task_row_metrics(array $taskRows): array
 }
 
 /**
- * Oude SAP-taken (Job_Task_No niet in NNN-NNN-NNN-formaat, bv. 40-werkorders) vallen buiten
- * elke Totaling-range en werden voorheen weggelaten. Ze worden hier samengevoegd tot één
- * kunstmatige detailregel "SAP" en bij de projecttotaalregel 000 opgeteld (zat daar nog niet in).
+ * Oude SAP-taken (Job_Task_No ^40\d{5}$, gemigreerde SAP-werkorders) vallen buiten FinRap's
+ * Totaling-range en werden voorheen weggelaten; BC telt ze (tekstvergelijking) wel mee in 000.
+ * Overige niet-geformatteerde taken (WO..., ASS 150000) blijven buiten beschouwing. Ze worden hier samengevoegd tot één
+ * kunstmatige detailregel "SAP" en bij de projecttotaalregel 000 opgeteld, zodat 000 overeenkomt met BC.
  */
 function finrap_append_sap_group_row(array $displayTaskRows, array $allTaskRows): array
 {
@@ -5188,7 +5199,7 @@ function finrap_append_sap_group_row(array $displayTaskRows, array $allTaskRows)
             continue;
         }
         $code = trim((string) ($taskRow['Cost_Group_Code'] ?? ''));
-        if ($code === '' || finrap_is_formatted_task_no($code)) {
+        if (!finrap_is_sap_task_no($code)) {
             continue;
         }
         $sapRows[] = $taskRow;
