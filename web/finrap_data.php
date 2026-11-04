@@ -13,6 +13,7 @@ require_once __DIR__ . '/auth_helper.php';
 const FINRAP_FORMATTED_TASK_NOS_ONLY = true;
 const FINRAP_GLOBAL_TOTAL_TASK_NO = '000-000-000';
 const FINRAP_PROJECT_ROOT_TOTAL_TASK_CODE = '000';
+const FINRAP_SAP_GROUP_CODE = 'SAP';
 
 const FINRAP_BUDGET_HOURS_ENTITY_SET = 'JobBaselineLines';
 const FINRAP_BUDGET_HOURS_FIELD = 'Quantity';
@@ -2442,6 +2443,12 @@ function finrap_is_formatted_task_no(string $taskNo): bool
     return preg_match('/^\d{3}-\d{3}-\d{3}$/', trim($taskNo)) === 1;
 }
 
+/** Oude SAP-werkorder als taak: exact 7 cijfers beginnend met 40 (bv. 4052840). */
+function finrap_is_sap_task_no(string $taskNo): bool
+{
+    return preg_match('/^40\d{5}$/', trim($taskNo)) === 1;
+}
+
 function finrap_task_no_to_numeric(string $taskNo): ?int
 {
     $value = trim($taskNo);
@@ -2541,11 +2548,11 @@ function finrap_fetch_budget_hours_by_task(
             continue;
         }
 
-        if (FINRAP_FORMATTED_TASK_NOS_ONLY && !finrap_is_formatted_task_no($taskNo)) {
+        $taskKey = strtolower($taskNo);
+        if (FINRAP_FORMATTED_TASK_NOS_ONLY && !finrap_is_formatted_task_no($taskNo) && !(finrap_is_sap_task_no($taskNo) && isset($allowedLookup[$taskKey]))) {
             continue;
         }
 
-        $taskKey = strtolower($taskNo);
         if ($allowedLookup !== [] && !isset($allowedLookup[$taskKey])) {
             continue;
         }
@@ -2769,11 +2776,11 @@ function finrap_parse_baseline_amounts_by_task(array $baselineRows, array $allow
             continue;
         }
 
-        if (FINRAP_FORMATTED_TASK_NOS_ONLY && !finrap_is_formatted_task_no($taskNo)) {
+        $taskKey = strtolower($taskNo);
+        if (FINRAP_FORMATTED_TASK_NOS_ONLY && !finrap_is_formatted_task_no($taskNo) && !(finrap_is_sap_task_no($taskNo) && isset($allowedLookup[$taskKey]))) {
             continue;
         }
 
-        $taskKey = strtolower($taskNo);
         if ($allowedLookup !== [] && !isset($allowedLookup[$taskKey])) {
             continue;
         }
@@ -2855,11 +2862,11 @@ function finrap_parse_project_task_contract_by_task(
             continue;
         }
 
-        if (FINRAP_FORMATTED_TASK_NOS_ONLY && !finrap_is_formatted_task_no($taskNo)) {
+        $taskKey = strtolower($taskNo);
+        if (FINRAP_FORMATTED_TASK_NOS_ONLY && !finrap_is_formatted_task_no($taskNo) && !(finrap_is_sap_task_no($taskNo) && isset($allowedLookup[$taskKey]))) {
             continue;
         }
 
-        $taskKey = strtolower($taskNo);
         if ($allowedLookup !== [] && !isset($allowedLookup[$taskKey])) {
             continue;
         }
@@ -2907,11 +2914,11 @@ function finrap_parse_project_task_amounts_by_task(
             continue;
         }
 
-        if (FINRAP_FORMATTED_TASK_NOS_ONLY && !finrap_is_formatted_task_no($taskNo)) {
+        $taskKey = strtolower($taskNo);
+        if (FINRAP_FORMATTED_TASK_NOS_ONLY && !finrap_is_formatted_task_no($taskNo) && !(finrap_is_sap_task_no($taskNo) && isset($allowedLookup[$taskKey]))) {
             continue;
         }
 
-        $taskKey = strtolower($taskNo);
         if ($allowedLookup !== [] && !isset($allowedLookup[$taskKey])) {
             continue;
         }
@@ -4664,6 +4671,10 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
         }
 
         $hasHourDetailRows = true;
+        if (FINRAP_FORMATTED_TASK_NOS_ONLY && !finrap_is_formatted_task_no($hoursTaskNo) && !finrap_is_sap_task_no($hoursTaskNo)) {
+            continue;
+        }
+
         $hoursTaskKey = strtolower($hoursTaskNo);
         $hoursBudgetQuantity = finance_to_float($hoursRow['LVS_Budget_Hours_Quantity'] ?? 0.0);
         $hoursUsedQuantity = finance_to_float($hoursRow['LVS_Used_Hours_Quantity'] ?? 0.0);
@@ -4844,6 +4855,7 @@ function finrap_collect_modal_data(string $company, string $projectNo, int $ttl)
     }
 
     $displayTaskRows = finrap_finalize_task_row_metrics($displayTaskRows);
+    $displayTaskRows = finrap_append_sap_group_row($displayTaskRows, $taskRowsByKey);
 
     $aggregatedTotals = finrap_aggregate_detail_task_rows($displayTaskRows);
 
@@ -5171,6 +5183,64 @@ function finrap_finalize_task_row_metrics(array $taskRows): array
     finrap_rollup_total_row_metrics($taskRows);
 
     return $taskRows;
+}
+
+/**
+ * Oude SAP-taken (Job_Task_No ^40\d{5}$, gemigreerde SAP-werkorders) vallen buiten FinRap's
+ * Totaling-range en werden voorheen weggelaten; BC telt ze (tekstvergelijking) wel mee in 000.
+ * Overige niet-geformatteerde taken (WO..., ASS 150000) blijven buiten beschouwing. Ze worden hier samengevoegd tot één
+ * kunstmatige detailregel "SAP" en bij de projecttotaalregel 000 opgeteld, zodat 000 overeenkomt met BC.
+ */
+function finrap_append_sap_group_row(array $displayTaskRows, array $allTaskRows): array
+{
+    $sapRows = [];
+    foreach ($allTaskRows as $taskRow) {
+        if (!is_array($taskRow) || (bool) ($taskRow['Is_Total_Row'] ?? false)) {
+            continue;
+        }
+        $code = trim((string) ($taskRow['Cost_Group_Code'] ?? ''));
+        if (!finrap_is_sap_task_no($code)) {
+            continue;
+        }
+        $sapRows[] = $taskRow;
+    }
+
+    if ($sapRows === []) {
+        return $displayTaskRows;
+    }
+
+    $sapTotals = finrap_aggregate_detail_task_rows($sapRows);
+    $sapRow = array_merge($sapTotals, [
+        'Cost_Group_Code' => FINRAP_SAP_GROUP_CODE,
+        'Cost_Group_Description' => 'Import vanuit SAP',
+        'Job_Task_Type' => '',
+        'Totaling' => '',
+        'Job_Change_Order_No' => '',
+        'Is_Total_Row' => false,
+        'Is_Sap_Group_Row' => true,
+        'Sap_Task_Codes' => array_map(static fn(array $row): string => (string) $row['Cost_Group_Code'], $sapRows),
+    ]);
+
+    $sumFields = ['Contract_Value', 'Budget_Revenue', 'Budget_Cost', 'Budget_Hours', 'EAC', 'EAC_Hours', 'Booked_Hours',
+        'Booked_Cost', 'Unposted_Cost', 'To_Book_Cost', 'Costs_Total', 'Entered_Obligations', 'Invoiced_Amount'];
+    foreach ($displayTaskRows as &$row) {
+        if (!is_array($row) || !(bool) ($row['Is_Total_Row'] ?? false)
+            || !finrap_is_project_root_total_task_code((string) ($row['Cost_Group_Code'] ?? ''))) {
+            continue;
+        }
+        foreach ($sumFields as $field) {
+            $row[$field] = finance_add_amount(finance_to_float($row[$field] ?? 0.0), finance_to_float($sapRow[$field] ?? 0.0));
+        }
+        $row['Variance_Budget_EAC'] = finance_calculate_result(
+            finance_to_float($row['Budget_Cost'] ?? 0.0),
+            finance_to_float($row['EAC'] ?? 0.0)
+        );
+    }
+    unset($row);
+
+    $displayTaskRows[] = $sapRow;
+
+    return $displayTaskRows;
 }
 
 function finrap_get_report_summary_totals(array $taskRows): array
