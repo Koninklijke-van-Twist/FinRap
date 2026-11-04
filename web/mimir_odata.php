@@ -117,7 +117,7 @@ function odata_mimir_is_bc_request_error(int $code, string $message): bool
         return true;
     }
 
-    return $code === 502 && preg_match('/\bBC\b[^0-9]{0,20}\b4\d\d\b/i', $message) === 1;
+    return $code === 502 && preg_match('/\bHTTP 4\d\d from OData\b|\bBC\b[^0-9]{0,20}\b4\d\d\b/i', $message) === 1;
 }
 
 function odata_mimir_fail(Exception $exception): void
