@@ -86,6 +86,12 @@ if (str_contains($uri, '/mimir/api/query.php')) {
     if (!is_array($body)) {
         $body = [];
     }
+    $selectList = is_array($body['select'] ?? null) ? $body['select'] : explode(',', (string) ($body['select'] ?? ''));
+    if (($body['table'] ?? '') === 'JobLedgerEntries' && in_array('Type', $selectList, true)) {
+        http_response_code(400);
+        echo json_encode(['error' => 'Onbekende kolom: Type']);
+        exit;
+    }
     echo json_encode(['value' => [[
         'No' => 'PRJ1',
         'company' => (string) ($body['company'] ?? ''),
@@ -349,6 +355,18 @@ try {
         json_encode($project, JSON_UNESCAPED_UNICODE)
     );
     $afterCache = glob(dirname(__DIR__) . '/cache/odata/*.json') ?: [];
+
+    // Onbekende kolom (400) is een afgewezen select, geen Mímir-storing: geen circuit-breaker,
+    // de volgende select-variant gaat gewoon via Mímir.
+    $ledger = finrap_odata_get_all_with_select_fallback('', 'Production', 'Koninklijke van Twist', [], 30, 'JobLedgerEntries',
+        ['Job_Task_No,Total_Cost_LCY,Type', 'Job_Task_No,Total_Cost_LCY'], "Job_No eq 'PRJ1'");
+    test_assert(
+        'onbekende kolom: volgende select-variant via Mímir',
+        is_array($ledger) && ($ledger[0]['table'] ?? '') === 'JobLedgerEntries'
+            && !in_array('Type', is_array($ledger[0]['select'] ?? null) ? $ledger[0]['select'] : [], true),
+        json_encode($ledger, JSON_UNESCAPED_UNICODE)
+    );
+    test_assert('onbekende kolom opent circuit-breaker niet', odata_mimir_circuit_open() === false);
     test_assert('Mímir slaat FinRap-filecache over', count($afterCache) === count($beforeCache));
 
     $companyRows = odata_get_all('https://bc.example/Sandbox/ODataV4/Company?$select=Name', [], 30);

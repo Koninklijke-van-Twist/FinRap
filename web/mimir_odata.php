@@ -98,6 +98,15 @@ function odata_mimir_timeout_seconds(): int
     return odata_mimir_timeout_seconds_for_sapi(PHP_SAPI);
 }
 
+/**
+ * Mímir wees het verzoek zelf af (400/404: onbekende kolom, veld of tabel volgens het BC-$metadata).
+ * Mímir is gezond en BC kent het veld/de tabel ook niet; dus geen circuit-breaker en geen
+ * directe-OData-fallback. De aanroeper (bv. select-varianten) probeert de volgende variant.
+ */
+class OdataMimirRequestRejected extends Exception
+{
+}
+
 function odata_mimir_fail(Exception $exception): void
 {
     odata_mimir_trip($exception);
@@ -290,6 +299,8 @@ function odata_mimir_or_direct(callable $viaMimir, callable $viaDirect)
 
     try {
         return $viaMimir();
+    } catch (OdataMimirRequestRejected $rejected) {
+        throw $rejected;
     } catch (Throwable $exception) {
         odata_mimir_trip($exception);
         if (!odata_bc_credentials_configured()) {
@@ -499,6 +510,9 @@ function odata_mimir_request(string $method, string $path, ?array $jsonBody = nu
     $decoded = json_decode($raw, true);
     if ($code < 200 || $code >= 300) {
         $message = is_array($decoded) ? (string) ($decoded['error'] ?? $raw) : $raw;
+        if ($code === 400 || $code === 404) {
+            throw new OdataMimirRequestRejected('Mímir HTTP ' . $code . ': ' . $message, $code);
+        }
         odata_mimir_fail(new Exception('Mímir HTTP ' . $code . ': ' . $message));
     }
     if (!is_array($decoded)) {
