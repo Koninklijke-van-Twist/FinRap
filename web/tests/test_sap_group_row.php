@@ -65,6 +65,18 @@ test_assert('SAP EAC Kosten', abs(($eac['4067021'] ?? 0) - 10) < 0.000001);
 $obl = finrap_parse_project_task_amounts_by_task($projectTaskRows, array_keys($taskRowsByKey), '153586', 'LVS_Registered_Purchases_Amt');
 test_assert('SAP verplichtingen', abs(($obl['4067021'] ?? 0) - 5) < 0.000001);
 
+// 150933: SAP-project zonder 000-regel — kop moet aansluiten op 'Totaal alle regels' (incl. SAP-optelgroep).
+$det999 = ['Cost_Group_Code' => '999-999-999', 'Is_Total_Row' => false, 'Budget_Cost' => 65024.79, 'EAC' => 0.0, 'Booked_Cost' => 0.0];
+$sapC = ['Cost_Group_Code' => '4052850', 'Is_Total_Row' => false, 'Budget_Cost' => 121699.0, 'EAC' => 0.0, 'Booked_Cost' => 176487.14, 'Entered_Obligations' => 10375.01];
+$noRootRows = finrap_append_sap_group_row([$det999], [$det999, $sapC]);
+$tableTotal = finrap_aggregate_detail_task_rows($noRootRows);
+$header = finrap_build_header_metric_rows([], $noRootRows, '150933', [], 0.0)[0];
+test_assert('Kop VC = tabeltotaal (zonder 000)', abs($header['total_direct_cost'] - $tableTotal['Budget_Cost']) < 0.01, json_encode($header['total_direct_cost'] ?? null));
+test_assert('Kop geboekt = tabeltotaal (zonder 000)', abs($header['booked_cost'] - 176487.14) < 0.01, json_encode($header['booked_cost'] ?? null));
+$withRoot = finrap_append_sap_group_row([$root, $detail], [$root, $detail, $sapA, $sapB]);
+$headerRoot = finrap_build_header_metric_rows([], $withRoot, 'X', [], 0.0)[0];
+test_assert('Kop VC incl. SAP (met 000)', abs($headerRoot['total_direct_cost'] - finrap_aggregate_detail_task_rows($withRoot)['Budget_Cost']) < 0.01);
+
 if ($failures > 0) {
     echo "\n{$failures} failure(s)\n";
     exit(1);

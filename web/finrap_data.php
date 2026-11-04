@@ -3079,11 +3079,13 @@ function finrap_collect_prj_header_task_keys(array $taskRows, array $changeOrder
             continue;
         }
 
-        if (FINRAP_FORMATTED_TASK_NOS_ONLY && !finrap_is_formatted_task_no($taskCode)) {
+        // Kunstmatige SAP-optelgroep telt mee in 'Totaal alle regels', dus ook in de kop.
+        $isSapGroupRow = (bool) ($taskRow['Is_Sap_Group_Row'] ?? false);
+        if (!$isSapGroupRow && FINRAP_FORMATTED_TASK_NOS_ONLY && !finrap_is_formatted_task_no($taskCode)) {
             continue;
         }
 
-        if ($range !== null && !finrap_task_no_in_range($taskCode, $range)) {
+        if (!$isSapGroupRow && $range !== null && !finrap_task_no_in_range($taskCode, $range)) {
             continue;
         }
 
@@ -3119,7 +3121,8 @@ function finrap_collect_prj_header_task_keys_without_total_row(array $taskRows, 
             continue;
         }
 
-        if (FINRAP_FORMATTED_TASK_NOS_ONLY && !finrap_is_formatted_task_no($taskCode)) {
+        if (!(bool) ($taskRow['Is_Sap_Group_Row'] ?? false)
+            && FINRAP_FORMATTED_TASK_NOS_ONLY && !finrap_is_formatted_task_no($taskCode)) {
             continue;
         }
 
