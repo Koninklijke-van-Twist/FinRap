@@ -313,20 +313,27 @@ test_assert_float(
     finance_to_float($taskRowsTyped['001-000-000']['To_Book_Cost'] ?? 0.0)
 );
 
-// PurchaseLines: Outstanding_Quantity 0 = volledig ontvangen; bedrag uit Amt_Rcd_Not_Invoiced_LCY.
+// PurchaseLines: Outstanding_Quantity 0 = volledig ontvangen; bedrag excl. btw uit PurchaseReceiptLines.
 $mappedPurchase = finrap_map_purchase_lines([
-    ['Job_Task_No' => 'T1', 'No' => 'A', 'Line_No' => 10, 'Outstanding_Quantity' => 0, 'Amt_Rcd_Not_Invoiced_LCY' => 250.0],
-    ['Job_Task_No' => 'T1', 'No' => 'B', 'Line_No' => 20, 'Outstanding_Quantity' => 3, 'Amt_Rcd_Not_Invoiced_LCY' => 100.0],
+    ['Document_No' => 'PO1', 'Job_Task_No' => 'T1', 'No' => 'A', 'Line_No' => 10, 'Outstanding_Quantity' => 0],
+    ['Document_No' => 'PO1', 'Job_Task_No' => 'T1', 'No' => 'B', 'Line_No' => 20, 'Outstanding_Quantity' => 3],
+], [
+    ['LVS_Order_No' => 'PO1', 'LVS_Order_Line_No' => 10, 'LVS_Amt_Rcd_Not_Invoiced' => 200.0],
+    ['LVS_Order_No' => 'PO1', 'LVS_Order_Line_No' => 10, 'LVS_Amt_Rcd_Not_Invoiced' => 50.0],
+    ['LVS_Order_No' => 'PO1', 'LVS_Order_Line_No' => 20, 'LVS_Amt_Rcd_Not_Invoiced' => 100.0],
 ]);
-$purchaseByTask = finrap_parse_received_not_posted_by_task($mappedPurchase, ['t1|a' => 0.0, 't1|b' => 0.0]);
-test_assert_float('PurchaseLines volledig ontvangen telt in te boeken', 250.0, finance_to_float($purchaseByTask['t1'] ?? 0.0));
-test_assert('ProjectPosten Type Grootboekrekening is inkoop', finance_ledger_type_is_purchase('Grootboekrekening'));
-test_assert('ProjectPosten Type Resource is geen inkoop', !finance_ledger_type_is_purchase('Resource'));
-test_assert_float(
-    'ProjectPosten Total_Cost telt als geboekte inkoop',
-    80.0,
-    finance_to_float(finrap_parse_booked_purchase_costs_by_task([['Job_Task_No' => 'T1', 'Type' => 'Grootboekrekening', 'Total_Cost' => 80.0]])['t1'] ?? 0.0)
-);
+$purchaseByTask = finrap_parse_received_not_posted_by_task($mappedPurchase, []);
+test_assert_float('PurchaseLines volledig ontvangen telt in te boeken (excl. btw, zonder planning-lookup)', 250.0, finance_to_float($purchaseByTask['t1'] ?? 0.0));
+
+// 153390 / taak 4066162: veel andere facturen geboekt op de taak + PO 4500111639 ontvangen-niet-gefactureerd.
+$rows153390 = ['4066162' => ['Booked_Cost' => 750000.0]];
+$received153390 = finrap_parse_received_not_posted_by_task(finrap_map_purchase_lines(
+    [['Document_No' => '4500111639', 'Line_No' => 10000, 'Job_Task_No' => '4066162', 'No' => 'X', 'Outstanding_Quantity' => 0]],
+    [['LVS_Order_No' => '4500111639', 'LVS_Order_Line_No' => 10000, 'LVS_Amt_Rcd_Not_Invoiced' => 131867.54]]
+), []);
+finrap_apply_to_book_costs_to_task_rows($rows153390, [], $received153390, [], true);
+test_assert_float('153390 te boeken niet weggedrukt door andere facturen', 131867.54, finance_to_float($rows153390['4066162']['To_Book_Cost'] ?? 0.0));
+test_assert_float('153390 totale = geboekt + te boeken', 881867.54, finance_to_float($rows153390['4066162']['Costs_Total'] ?? 0.0));
 
 if ($failures > 0) {
     echo "\n{$failures} test(s) failed.\n";

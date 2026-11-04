@@ -211,7 +211,7 @@ function finrap_cost_group_value_tooltip_html(string $columnKey): string
     if ($columnKey === 'To_Book_Cost') {
         return finrap_tooltip_formula_html([
             ['type' => 'text', 'text' => '('],
-            ['type' => 'ref', 'table' => 'PurchaseLines', 'field' => 'Amt_Rcd_Not_Invoiced_LCY'],
+            ['type' => 'ref', 'table' => 'PurchaseReceiptLines', 'field' => 'LVS_Amt_Rcd_Not_Invoiced'],
             ['type' => 'text', 'text' => ', '],
             ['type' => 'ref', 'table' => 'PurchaseLines', 'field' => 'Outstanding_Quantity'],
             ['type' => 'text', 'text' => ' = 0, Qty_Posted = 0) + ('],
