@@ -313,6 +313,21 @@ test_assert_float(
     finance_to_float($taskRowsTyped['001-000-000']['To_Book_Cost'] ?? 0.0)
 );
 
+// PurchaseLines: Outstanding_Quantity 0 = volledig ontvangen; bedrag uit Amt_Rcd_Not_Invoiced_LCY.
+$mappedPurchase = finrap_map_purchase_lines([
+    ['Job_Task_No' => 'T1', 'No' => 'A', 'Line_No' => 10, 'Outstanding_Quantity' => 0, 'Amt_Rcd_Not_Invoiced_LCY' => 250.0],
+    ['Job_Task_No' => 'T1', 'No' => 'B', 'Line_No' => 20, 'Outstanding_Quantity' => 3, 'Amt_Rcd_Not_Invoiced_LCY' => 100.0],
+]);
+$purchaseByTask = finrap_parse_received_not_posted_by_task($mappedPurchase, ['t1|a' => 0.0, 't1|b' => 0.0]);
+test_assert_float('PurchaseLines volledig ontvangen telt in te boeken', 250.0, finance_to_float($purchaseByTask['t1'] ?? 0.0));
+test_assert('ProjectPosten Type Grootboekrekening is inkoop', finance_ledger_type_is_purchase('Grootboekrekening'));
+test_assert('ProjectPosten Type Resource is geen inkoop', !finance_ledger_type_is_purchase('Resource'));
+test_assert_float(
+    'ProjectPosten Total_Cost telt als geboekte inkoop',
+    80.0,
+    finance_to_float(finrap_parse_booked_purchase_costs_by_task([['Job_Task_No' => 'T1', 'Type' => 'Grootboekrekening', 'Total_Cost' => 80.0]])['t1'] ?? 0.0)
+);
+
 if ($failures > 0) {
     echo "\n{$failures} test(s) failed.\n";
     exit(1);
